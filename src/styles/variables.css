@@ -1,0 +1,62 @@
+:root {
+  --color-bg: #FAF8F5;
+  --color-surface: #FFFFFF;
+  --color-surface-hover: #F5F2EE;
+  --color-text: #2D2A24;
+  --color-text-secondary: #8B8680;
+  --color-text-tertiary: #B8B3AD;
+  --color-accent: #E8915A;
+  --color-accent-soft: #FDF0E8;
+  --color-green: #8FA88A;
+  --color-green-soft: #EDF5EB;
+  --color-blue: #7B9EC7;
+  --color-blue-soft: #EBF2FA;
+  --color-purple: #A089C0;
+  --color-purple-soft: #F2EDF8;
+  --color-border: #E8E4DF;
+  --color-divider: #F0EDE9;
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 20px;
+  --radius-full: 999px;
+  --shadow-sm: 0 1px 3px rgba(45, 42, 36, 0.06);
+  --shadow-md: 0 4px 16px rgba(45, 42, 36, 0.08);
+  --shadow-lg: 0 8px 32px rgba(45, 42, 36, 0.10);
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+  --safe-bottom: env(safe-area-inset-bottom, 12px);
+  --safe-top: env(safe-area-inset-top, 0px);
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --duration-slow: 400ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #1C1A17;
+    --color-surface: #252320;
+    --color-surface-hover: #2E2B27;
+    --color-text: #EDEAE6;
+    --color-text-secondary: #9E9A94;
+    --color-text-tertiary: #6B6762;
+    --color-accent: #F0A070;
+    --color-accent-soft: #3D2A1E;
+    --color-green: #9FBB98;
+    --color-green-soft: #253A21;
+    --color-blue: #93B4DA;
+    --color-blue-soft: #1E2E3D;
+    --color-purple: #B9A2D8;
+    --color-purple-soft: #2E2540;
+    --color-border: #363330;
+    --color-divider: #2E2B27;
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.2);
+    --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.3);
+    --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
+  }
+}
