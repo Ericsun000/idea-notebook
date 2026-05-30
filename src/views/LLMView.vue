@@ -194,9 +194,10 @@ async function doConnect() {
   connecting.value = true
   errorMsg.value = ''
   try {
-    const ok = await testConnection(baseUrl.value, apiKey.value.trim())
+    const noV1 = selectedPreset.value.noV1 || false
+    const ok = await testConnection(baseUrl.value, apiKey.value.trim(), noV1)
     if (!ok) throw new Error('连接失败，请检查 Base URL 和 API Key')
-    const cfg = { baseUrl: baseUrl.value, apiKey: apiKey.value.trim(), model: modelId.value || undefined }
+    const cfg = { baseUrl: baseUrl.value, apiKey: apiKey.value.trim(), model: modelId.value || undefined, noV1 }
     await setLLMConfig(cfg)
     config.value = cfg
     connected.value = true

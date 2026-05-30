@@ -28,7 +28,8 @@ export const MODEL_PRESETS = [
     id: 'glm-4',
     label: '智谱 GLM-4',
     baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
-    description: '智谱AI，中文理解优秀'
+    description: '智谱AI，中文理解优秀',
+    noV1: true
   },
   {
     id: 'qwen-plus',
@@ -47,6 +48,7 @@ export const MODEL_PRESETS = [
     label: '本地 Llama / Ollama',
     baseUrl: 'http://localhost:11434',
     description: '本地运行，完全离线',
+    noV1: true,
     customUrl: true,
     customModel: true
   },

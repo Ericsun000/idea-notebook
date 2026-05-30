@@ -34,7 +34,8 @@ async function callLLM(systemPrompt, userMessage, options = {}) {
     throw new Error('安全警告：API Key 将通过不安全的 HTTP 传输，请使用 HTTPS 地址')
   }
 
-  const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+  const prefix = config.noV1 ? '' : '/v1'
+  const response = await fetch(`${baseUrl}${prefix}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -166,9 +167,11 @@ ${previousDiscussions && Object.values(previousDiscussions).some(a => a.length) 
   }
 }
 
-export async function testConnection(baseUrl, apiKey) {
+export async function testConnection(baseUrl, apiKey, noV1 = false) {
   const url = baseUrl.replace(/\/+$/, '')
-  const response = await fetch(`${url}/v1/models`, {
+  const prefix = noV1 ? '' : '/v1'
+  const modelsUrl = noV1 ? `${url}/models` : `${url}${prefix}/models`
+  const response = await fetch(modelsUrl, {
     method: 'GET',
     headers: { 'Authorization': `Bearer ${apiKey}` }
   })
