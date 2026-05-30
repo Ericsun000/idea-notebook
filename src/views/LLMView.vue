@@ -46,7 +46,7 @@
           />
         </div>
 
-        <div class="form-group">
+        <div class="form-group" v-if="!selectedPreset.noApiKey">
           <label class="form-label">API Key</label>
           <div class="input-password">
             <input
@@ -67,6 +67,9 @@
               </svg>
             </button>
           </div>
+        </div>
+        <div class="form-group" v-else>
+          <p class="no-key-hint">此模型运行在本地，无需 API Key</p>
         </div>
 
         <button class="connect-btn" :class="{ loading: connecting }" :disabled="connecting || !canConnect" @click="doConnect">
@@ -175,7 +178,11 @@ const discussing = ref(false)
 const result = ref(null)
 const actionError = ref('')
 
-const canConnect = computed(() => baseUrl.value && apiKey.value.trim())
+const canConnect = computed(() => {
+  if (!baseUrl.value) return false
+  if (selectedPreset.value.noApiKey) return true
+  return !!apiKey.value.trim()
+})
 
 onMounted(async () => {
   const cfg = await getLLMConfig()
@@ -195,9 +202,10 @@ async function doConnect() {
   errorMsg.value = ''
   try {
     const noV1 = selectedPreset.value.noV1 || false
-    const ok = await testConnection(baseUrl.value, apiKey.value.trim(), noV1)
+    const noApiKey = selectedPreset.value.noApiKey || false
+    const ok = await testConnection(baseUrl.value, apiKey.value.trim(), noV1, noApiKey)
     if (!ok) throw new Error('连接失败，请检查 Base URL 和 API Key')
-    const cfg = { baseUrl: baseUrl.value, apiKey: apiKey.value.trim(), model: modelId.value || undefined, noV1 }
+    const cfg = { baseUrl: baseUrl.value, apiKey: apiKey.value.trim(), model: modelId.value || undefined, noV1, noApiKey }
     await setLLMConfig(cfg)
     config.value = cfg
     connected.value = true
@@ -578,6 +586,15 @@ function doSwitchModel() {
   color: #DC2626;
   border-radius: var(--radius-sm);
   font-size: var(--text-sm);
+}
+
+.no-key-hint {
+  padding: 12px 14px;
+  background: var(--color-green-soft);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  color: var(--color-green);
+  text-align: center;
 }
 
 .privacy-hint {

@@ -8,8 +8,11 @@ function truncate(text, maxLen = 300) {
 
 async function callLLM(systemPrompt, userMessage, options = {}) {
   const config = await getLLMConfig()
-  if (!config || !config.baseUrl || !config.apiKey) {
+  if (!config || !config.baseUrl) {
     throw new Error('LLM 未配置，请先在 AI 助手页面设置')
+  }
+  if (!config.noApiKey && !config.apiKey) {
+    throw new Error('API Key 未配置，请先在 AI 助手页面设置')
   }
 
   const { model, temperature = 0.3, maxTokens = 1024, response_format } = options
@@ -39,7 +42,7 @@ async function callLLM(systemPrompt, userMessage, options = {}) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${config.apiKey}`
+      ...(config.noApiKey ? {} : { 'Authorization': `Bearer ${config.apiKey}` })
     },
     body: JSON.stringify(body)
   })
@@ -167,13 +170,11 @@ ${previousDiscussions && Object.values(previousDiscussions).some(a => a.length) 
   }
 }
 
-export async function testConnection(baseUrl, apiKey, noV1 = false) {
+export async function testConnection(baseUrl, apiKey, noV1 = false, noApiKey = false) {
   const url = baseUrl.replace(/\/+$/, '')
   const prefix = noV1 ? '' : '/v1'
   const modelsUrl = noV1 ? `${url}/models` : `${url}${prefix}/models`
-  const response = await fetch(modelsUrl, {
-    method: 'GET',
-    headers: { 'Authorization': `Bearer ${apiKey}` }
-  })
+  const headers = noApiKey ? {} : { 'Authorization': `Bearer ${apiKey}` }
+  const response = await fetch(modelsUrl, { method: 'GET', headers })
   return response.ok
 }

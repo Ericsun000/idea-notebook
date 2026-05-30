@@ -49,6 +49,16 @@ export const MODEL_PRESETS = [
     baseUrl: 'http://localhost:11434',
     description: '本地运行，完全离线',
     noV1: true,
+    noApiKey: true,
+    customUrl: true,
+    customModel: true
+  },
+  {
+    id: '',
+    label: 'LM Studio',
+    baseUrl: 'http://localhost:1234/v1',
+    description: '本地 LM Studio，完全离线',
+    noApiKey: true,
     customUrl: true,
     customModel: true
   },
