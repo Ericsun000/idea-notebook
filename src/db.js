@@ -1,7 +1,7 @@
 import { openDB } from 'idb'
 
 const DB_NAME = 'idea-notebook'
-const DB_VERSION = 3
+const DB_VERSION = 5
 
 let dbPromise = null
 
@@ -29,6 +29,38 @@ export function getDB() {
             ideaStore.deleteIndex('deleted')
           }
         }
+        if (oldVersion < 5) {
+          if (!db.objectStoreNames.contains('projects')) {
+            db.createObjectStore('projects', { keyPath: 'id' })
+          }
+          const ideaStore = transaction.objectStore('ideas')
+          if (ideaStore && !ideaStore.indexNames.contains('projectId')) {
+            ideaStore.createIndex('projectId', 'projectId', { unique: false })
+          }
+        }
+        if (oldVersion < 4) {
+          // Migrate old single llm_config to new llm_configs array
+          const settingsStore = transaction.objectStore('settings')
+          if (settingsStore) {
+            settingsStore.get('llm_config').then(oldVal => {
+              if (oldVal?.value) {
+                const old = oldVal.value
+                const newConfig = {
+                  baseUrl: old.baseUrl,
+                  apiKey: old.apiKey,
+                  model: old.model,
+                  noV1: old.noV1,
+                  noApiKey: old.noApiKey,
+                  label: old.label || old.model || old.baseUrl || '未命名',
+                  id: old.id || (Date.now().toString(36) + Math.random().toString(36).slice(2, 6)),
+                  createdAt: old.createdAt || Date.now()
+                }
+                settingsStore.put({ key: 'llm_configs', value: [newConfig], updatedAt: Date.now() })
+                settingsStore.delete('llm_config')
+              }
+            }).catch(() => {})
+          }
+        }
       }
     })
   }
@@ -43,7 +75,7 @@ function todayStr() {
   return new Date().toISOString().slice(0, 10)
 }
 
-export async function addIdea({ content, category, tags, source = 'text', voiceDuration = 0 }) {
+export async function addIdea({ content, category, tags, source = 'text', voiceDuration = 0, projectId = null }) {
   const db = await getDB()
   const idea = {
     id: generateId(),
@@ -57,7 +89,8 @@ export async function addIdea({ content, category, tags, source = 'text', voiceD
     completed: false,
     deleted: false,
     deletedAt: null,
-    discussion: []
+    discussion: [],
+    projectId
   }
   await db.add('ideas', idea)
   return idea
@@ -162,4 +195,59 @@ export async function purgeOldTrash(maxAge = 3 * 24 * 60 * 60 * 1000) {
 export async function permanentlyDeleteIdea(id) {
   const db = await getDB()
   await db.delete('ideas', id)
+}
+
+// ========== Projects CRUD ==========
+
+export async function addProject({ name, description = '', background = '', context = '', status = 'active' }) {
+  const db = await getDB()
+  const project = {
+    id: generateId(),
+    name,
+    description,
+    background,
+    context,
+    status,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }
+  await db.add('projects', project)
+  return project
+}
+
+export async function updateProject(id, changes) {
+  const db = await getDB()
+  const project = await db.get('projects', id)
+  if (!project) return
+  Object.assign(project, changes, { updatedAt: Date.now() })
+  await db.put('projects', project)
+  return project
+}
+
+export async function deleteProject(id) {
+  const db = await getDB()
+  // Unlink all ideas from this project
+  const linked = await db.getAllFromIndex('ideas', 'projectId', id)
+  for (const idea of linked) {
+    idea.projectId = null
+    await db.put('ideas', idea)
+  }
+  await db.delete('projects', id)
+}
+
+export async function getAllProjects() {
+  const db = await getDB()
+  const all = await db.getAll('projects')
+  return all.sort((a, b) => b.updatedAt - a.updatedAt)
+}
+
+export async function getProject(id) {
+  const db = await getDB()
+  return db.get('projects', id) || null
+}
+
+export async function getIdeasByProject(projectId) {
+  const db = await getDB()
+  const all = await db.getAllFromIndex('ideas', 'projectId', projectId)
+  return all.filter(i => !i.deleted).sort((a, b) => b.timestamp - a.timestamp)
 }

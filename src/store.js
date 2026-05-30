@@ -2,7 +2,8 @@ import { defineStore } from 'pinia'
 import {
   addIdea, softDeleteIdea, updateIdea, getTodayIdeas, getTodayNote,
   saveDailyNote, getAllIdeas, getAllDailyNotes, getIdeasByDate,
-  getTrashIdeas, restoreIdea, permanentlyDeleteIdea, purgeOldTrash
+  getTrashIdeas, restoreIdea, permanentlyDeleteIdea, purgeOldTrash,
+  addProject, updateProject, deleteProject, getAllProjects
 } from './db'
 import { classify, extractTags, generateDailySummary } from './classifier'
 
@@ -14,14 +15,23 @@ export const useIdeaStore = defineStore('ideas', {
     allNotes: [],
     trashIdeas: [],
     loading: false,
-    viewFilter: 'all'
+    viewFilter: 'all',
+    tagFilter: '',
+    projects: [],
+    activeProjectId: null
   }),
 
   getters: {
     filteredTodayIdeas: (state) => {
-      if (state.viewFilter === 'all') return state.todayIdeas
-      const completed = state.viewFilter === 'completed'
-      return state.todayIdeas.filter(i => !!i.completed === completed)
+      let ideas = state.todayIdeas
+      if (state.viewFilter !== 'all') {
+        const completed = state.viewFilter === 'completed'
+        ideas = ideas.filter(i => !!i.completed === completed)
+      }
+      if (state.tagFilter) {
+        ideas = ideas.filter(i => i.tags && i.tags.includes(state.tagFilter))
+      }
+      return ideas
     }
   },
 
@@ -61,14 +71,20 @@ export const useIdeaStore = defineStore('ideas', {
       this.viewFilter = filter
     },
 
-    async createIdea(text) {
+    setTagFilter(tag) {
+      this.tagFilter = this.tagFilter === tag ? '' : tag
+    },
+
+    async createIdea(text, projectId = null) {
       const { category } = classify(text)
       const tags = extractTags(text)
+      const pid = projectId !== null ? projectId : this.activeProjectId
       const idea = await addIdea({
         content: text,
         category,
         tags,
-        source: 'text'
+        source: 'text',
+        projectId: pid
       })
       this.todayIdeas.unshift(idea)
       return idea
@@ -82,7 +98,8 @@ export const useIdeaStore = defineStore('ideas', {
         category,
         tags,
         source: 'voice',
-        voiceDuration: Math.round(duration)
+        voiceDuration: Math.round(duration),
+        projectId: this.activeProjectId
       })
       this.todayIdeas.unshift(idea)
       return idea
@@ -150,6 +167,36 @@ export const useIdeaStore = defineStore('ideas', {
 
     async getIdeasForDate(date) {
       return getIdeasByDate(date)
+    },
+
+    // --- Projects ---
+    setActiveProject(id) {
+      this.activeProjectId = this.activeProjectId === id ? null : id
+    },
+
+    async loadProjects() {
+      this.projects = await getAllProjects()
+    },
+
+    async createProject(data) {
+      const project = await addProject(data)
+      this.projects.unshift(project)
+      return project
+    },
+
+    async updateProject(id, changes) {
+      const updated = await updateProject(id, changes)
+      if (updated) {
+        const idx = this.projects.findIndex(p => p.id === id)
+        if (idx !== -1) this.projects[idx] = updated
+      }
+      return updated
+    },
+
+    async deleteProject(id) {
+      await deleteProject(id)
+      this.projects = this.projects.filter(p => p.id !== id)
+      if (this.activeProjectId === id) this.activeProjectId = null
     }
   }
 })

@@ -1,5 +1,6 @@
 import { getLLMConfig, isLLMConfigured, MODEL_PRESETS } from './settings'
 import { generateDailySummary } from './classifier'
+import { getProject } from './db'
 
 function cleanReasoningText(text) {
   if (!text) return null
@@ -19,8 +20,8 @@ function truncate(text, maxLen = 300) {
   return text.slice(0, maxLen) + '...'
 }
 
-async function callLLM(systemPrompt, userMessage, options = {}) {
-  const config = await getLLMConfig()
+async function callLLM(systemPrompt, userMessage, options = {}, llmConfig = null) {
+  const config = llmConfig || await getLLMConfig()
   if (!config || !config.baseUrl) {
     throw new Error('LLM 未配置，请先在 AI 助手页面设置')
   }
@@ -36,7 +37,7 @@ async function callLLM(systemPrompt, userMessage, options = {}) {
   const { model, temperature = 0.3, maxTokens = 1024, response_format } = options
 
   const body = {
-    model: model || config.model || 'deepseek-chat',
+    model: model || config.model || 'deepseek-v4-flash',
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userMessage }
@@ -108,8 +109,9 @@ function formatUsage(usage) {
   }
 }
 
-export async function generateSmartSummary(ideas) {
-  if (!(await isLLMConfigured())) {
+export async function generateSmartSummary(ideas, llmConfig = null) {
+  if (!Array.isArray(ideas)) return { content: '', usage: null, fallback: true }
+  if (!llmConfig && !(await isLLMConfigured())) {
     return { content: generateDailySummary(ideas), usage: null, fallback: true }
   }
 
@@ -133,7 +135,7 @@ export async function generateSmartSummary(ideas) {
 - 禁止只复读分类标签而不做内容整合`
 
   try {
-    const { content, usage } = await callLLM(systemPrompt, ideasText)
+    const { content, usage } = await callLLM(systemPrompt, ideasText, {}, llmConfig)
     const cleaned = cleanReasoningText(content)
     const fallback = !cleaned
     return { content: cleaned || generateDailySummary(ideas), usage: formatUsage(usage), fallback }
@@ -142,8 +144,9 @@ export async function generateSmartSummary(ideas) {
   }
 }
 
-export async function calibrateIdeas(ideas) {
-  if (!(await isLLMConfigured())) {
+export async function calibrateIdeas(ideas, llmConfig = null) {
+  if (!Array.isArray(ideas)) return { corrections: [], splits: [], usage: null, fallback: true }
+  if (!llmConfig && !(await isLLMConfigured())) {
     return { corrections: [], splits: [], usage: null, fallback: true }
   }
 
@@ -172,7 +175,7 @@ export async function calibrateIdeas(ideas) {
 
   try {
     const { content, usage } = await callLLM(systemPrompt, JSON.stringify(ideasJSON),
-      { temperature: 0.1, response_format: { type: 'json_object' } })
+      { temperature: 0.1, response_format: { type: 'json_object' } }, llmConfig)
     const parsed = parseJSONResponse(content)
     const fallback = !parsed
     return { corrections: parsed?.corrections || [], splits: parsed?.splits || [], usage: formatUsage(usage), fallback }
@@ -181,27 +184,47 @@ export async function calibrateIdeas(ideas) {
   }
 }
 
-export async function discussIdeasBatch(ideas, previousDiscussions = {}) {
-  if (!(await isLLMConfigured())) return []
+export async function discussIdeasBatch(ideas, previousDiscussions = {}, llmConfig = null) {
+  if (!Array.isArray(ideas)) return []
+  if (!llmConfig && !(await isLLMConfigured())) return []
 
-  const config = await getLLMConfig()
+  const config = llmConfig || await getLLMConfig()
   const modelName = config?.model || 'unknown'
 
-  const ideasJSON = ideas.map(i => {
-    const prev = previousDiscussions[i.id] || []
+  // Pre-fetch project context for ideas that belong to a project
+  const projectIds = [...new Set(ideas.filter(i => i.projectId).map(i => i.projectId))]
+  const projectMap = {}
+  for (const pid of projectIds) {
+    const p = await getProject(pid)
+    if (p) projectMap[pid] = p
+  }
+  const hasProjectContext = Object.keys(projectMap).length > 0
+
+  const ideasJSON = (Array.isArray(ideas) ? ideas : []).map(i => {
+    const raw = previousDiscussions[i.id]
+    const prev = Array.isArray(raw) ? raw : []
     const prevContext = prev.length > 0
       ? `\n已有评论：${prev.map(d => `[${d.model}] ${d.content}`).join(' | ')}`
       : ''
+    const proj = projectMap[i.projectId]
+    const projContext = proj
+      ? `\n所属项目：${proj.name}${proj.description ? `（${proj.description}）` : ''}${proj.context ? `\n项目上下文：${proj.context}` : ''}`
+      : ''
     return {
       id: i.id,
-      content: truncate(i.content),
+      content: truncate(i.content) + projContext,
       category: i.category,
       tags: i.tags,
       hasPrevious: prev.length > 0
     }
   })
 
+  const projectContextBlock = hasProjectContext
+    ? `部分想法属于某个项目，系统已附上项目背景信息。请结合项目上下文给出更有针对性的评论。\n`
+    : ''
+
   const systemPrompt = `你是用户的思维伙伴。对每条想法给出 80-200 字的深度评论。用中文。
+${projectContextBlock}
 
 每条评论应该：
 - 针对想法**具体内容**展开，不是泛泛评价
@@ -211,7 +234,7 @@ export async function discussIdeasBatch(ideas, previousDiscussions = {}) {
 **示例评论**（假如想法是"周末想去露营放松一下"）：
 "忙了一周确实需要换个环境。城西的森林公园不错，车程一小时内，而且这个季节蚊虫还不算多。建议带上便携咖啡壶——清晨在林子里煮一杯会很惬意。如果担心一个人，可以问问上次一起爬山的小王有没有兴趣。"
 
-${previousDiscussions && Object.values(previousDiscussions).some(a => a.length) ? '部分想法已有其他模型的评论，你可以从新角度补充或提出不同看法，但**不要复述已有观点**。' : ''}
+${previousDiscussions && Object.values(previousDiscussions).some(a => Array.isArray(a) && a.length) ? '部分想法已有其他模型的评论，你可以从新角度补充或提出不同看法，但**不要复述已有观点**。' : ''}
 **严格禁止**：禁止只复述想法内容而不加入新信息。每条评论必须包含延伸、提问或建议中的至少一项。
 
 返回纯 JSON，不要 markdown 标记：
@@ -219,9 +242,9 @@ ${previousDiscussions && Object.values(previousDiscussions).some(a => a.length) 
 
   try {
     const { content } = await callLLM(systemPrompt, JSON.stringify(ideasJSON),
-      { temperature: 0.6, maxTokens: 2048 })
+      { temperature: 0.6, maxTokens: 2048 }, llmConfig)
     const parsed = parseJSONResponse(content)
-    if (parsed?.discussions) {
+    if (parsed?.discussions && Array.isArray(parsed.discussions)) {
       return parsed.discussions.map(d => ({
         id: d.id,
         model: modelName,
@@ -232,6 +255,50 @@ ${previousDiscussions && Object.values(previousDiscussions).some(a => a.length) 
     return []
   } catch {
     return []
+  }
+}
+
+export async function generateProjectSummary(project, ideas, llmConfig = null) {
+  if (!project) return { content: '', usage: null, fallback: true }
+  if (!Array.isArray(ideas) || !ideas.length) {
+    return { content: `项目"${project.name}"下暂无想法，记录一些想法后再来总结。`, usage: null, fallback: true }
+  }
+  if (!llmConfig && !(await isLLMConfigured())) {
+    return { content: '', usage: null, fallback: true }
+  }
+
+  const ideasText = ideas.map((i, idx) =>
+    `${idx + 1}. ${truncate(i.content)} [标签: ${(i.tags || []).join(', ')}]`
+  ).join('\n')
+
+  const projectInfo = [
+    `项目名称：${project.name}`,
+    project.description ? `简介：${project.description}` : '',
+    project.background ? `背景/目标：${project.background}` : '',
+    project.context ? `关键上下文：${project.context}` : '',
+    `状态：${project.status}`,
+    `想法数量：${ideas.length}`
+  ].filter(Boolean).join('\n')
+
+  const systemPrompt = `你是项目顾问。根据以下项目信息和相关想法，写一段 200-400 字的项目阶段性回顾。
+
+回顾需要：
+- 结合项目背景，梳理当前想法的主题脉络和进展
+- 识别想法之间的关联、演进和值得注意的趋势
+- 给出 1-2 条具体的下一步建议或风险提醒
+- 像项目合伙人一样有洞察力，不要只复述列表
+
+返回自然段落式的回顾文字，不要 markdown 格式。`
+
+  const userMessage = `=== 项目信息 ===\n${projectInfo}\n\n=== 项目下的想法 ===\n${ideasText}`
+
+  try {
+    const { content, usage } = await callLLM(systemPrompt, userMessage, { maxTokens: 1536 }, llmConfig)
+    const cleaned = cleanReasoningText(content)
+    const fallback = !cleaned
+    return { content: cleaned || `项目"${project.name}"共有 ${ideas.length} 条想法，无法生成智能总结。`, usage: formatUsage(usage), fallback }
+  } catch {
+    return { content: `项目"${project.name}"共有 ${ideas.length} 条想法。`, usage: null, fallback: true }
   }
 }
 

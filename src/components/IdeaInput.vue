@@ -1,5 +1,32 @@
 <template>
   <div class="idea-input-wrap">
+    <div class="project-select-row" v-if="hasProjects">
+      <button class="project-chip" @click="showProjectPicker = !showProjectPicker">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="14" height="14">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+        </svg>
+        <span>{{ activeProjectName }}</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="10" height="10" class="chip-caret">
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+      </button>
+      <transition name="fade-slide-up">
+        <div class="project-picker" v-if="showProjectPicker">
+          <button
+            class="project-option"
+            :class="{ selected: activeProjectId === null }"
+            @click="selectProject(null)"
+          >📝 无项目</button>
+          <button
+            v-for="p in projects"
+            :key="p.id"
+            class="project-option"
+            :class="{ selected: activeProjectId === p.id }"
+            @click="selectProject(p.id)"
+          >{{ p.name }}</button>
+        </div>
+      </transition>
+    </div>
     <div class="input-card" :class="{ focused: isFocused, 'has-text': text.length > 0 }">
       <textarea
         ref="textareaRef"
@@ -9,7 +36,8 @@
         @focus="isFocused = true"
         @blur="onBlur"
         @input="autoResize"
-        @keydown.enter.exact.prevent="submit"
+        @keydown.meta.enter.prevent="submit"
+        @keydown.ctrl.enter.prevent="submit"
       ></textarea>
       <div class="input-actions">
         <VoiceInput
@@ -57,11 +85,13 @@
 </template>
 
 <script setup>
-import { ref, nextTick, watch } from 'vue'
+import { ref, nextTick, watch, computed, onMounted } from 'vue'
 import VoiceInput from './VoiceInput.vue'
 import { useVoiceInput } from '../composables/useVoiceInput.js'
+import { useIdeaStore } from '../store.js'
 
 const emit = defineEmits(['submit', 'voice-submit', 'submit-multiple'])
+const store = useIdeaStore()
 
 const text = ref('')
 const isFocused = ref(false)
@@ -72,6 +102,20 @@ const voiceStartTime = ref(0)
 
 const showSplitBanner = ref(false)
 const splitCandidates = ref(null)
+const showProjectPicker = ref(false)
+
+const projects = computed(() => store.projects)
+const hasProjects = computed(() => projects.value.length > 0)
+const activeProjectId = computed(() => store.activeProjectId)
+const activeProjectName = computed(() => {
+  if (!activeProjectId.value) return '无项目'
+  const p = projects.value.find(x => x.id === activeProjectId.value)
+  return p ? p.name : '无项目'
+})
+
+onMounted(() => {
+  if (!store.projects.length) store.loadProjects()
+})
 
 watch(() => voice.isListening.value, (val) => {
   isListening.value = val
@@ -84,19 +128,20 @@ function detectMultiIdea(input) {
   const lines = trimmed.split(/\n/).map(l => l.trim()).filter(l => l.length > 0)
   if (lines.length < 2) return null
 
+  const numberedRe = /^(\d+[\.\、\)）]|\(\d+\))\s*/
   let candidates = null
   let isNumbered = true
   for (const line of lines) {
-    if (!/^\d+[\.\、\)]\s+/.test(line)) { isNumbered = false; break }
+    if (!numberedRe.test(line)) { isNumbered = false; break }
   }
   if (isNumbered) {
-    candidates = lines.map(l => l.replace(/^\d+[\.\、\)]\s+/, '').trim())
+    candidates = lines.map(l => l.replace(numberedRe, '').trim())
   }
 
   if (!candidates) {
     let isBulleted = true
     for (const line of lines) {
-      if (!/^[-*•]\s+/.test(line)) { isBulleted = false; break }
+      if (!/^[-*•]\s/.test(line)) { isBulleted = false; break }
     }
     if (isBulleted) {
       candidates = lines.map(l => l.replace(/^[-*•]\s+/, '').trim())
@@ -176,6 +221,11 @@ function dismissSplit() {
   showSplitBanner.value = false
 }
 
+function selectProject(id) {
+  store.setActiveProject(id)
+  showProjectPicker.value = false
+}
+
 function onBlur() {
   setTimeout(() => { isFocused.value = false }, 150)
 }
@@ -188,14 +238,87 @@ function onBlur() {
   z-index: 10;
 }
 
+.project-select-row {
+  display: flex;
+  justify-content: flex-start;
+  margin-bottom: 6px;
+  position: relative;
+}
+
+.project-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  transition: all var(--duration-fast);
+}
+
+.project-chip:active {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.chip-caret {
+  opacity: 0.5;
+  transition: transform var(--duration-fast);
+}
+
+.project-picker {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  min-width: 160px;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  z-index: 20;
+  padding: 4px;
+}
+
+.project-option {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  text-align: left;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  border-radius: var(--radius-sm);
+  transition: background var(--duration-fast);
+}
+
+.project-option:active {
+  background: var(--color-surface-hover);
+}
+
+.project-option.selected {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
 .input-card {
   background: var(--color-surface);
   border: 1.5px solid var(--color-border);
   border-radius: var(--radius-lg);
-  padding: 12px 14px;
+  padding: 8px 12px;
   transition: all var(--duration-fast) var(--ease-out);
   display: flex;
   flex-direction: column;
+  gap: 4px;
+}
+
+.input-card.focused,
+.input-card.has-text {
+  padding: 12px 14px;
   gap: 8px;
 }
 

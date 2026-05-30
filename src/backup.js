@@ -2,15 +2,22 @@ import { getDB } from './db'
 
 export async function exportAllData() {
   const db = await getDB()
-  const [ideas, dailyNotes, settings] = await Promise.all([
+  const [ideas, dailyNotes, settings, projects] = await Promise.all([
     db.getAll('ideas'),
     db.getAll('dailyNotes'),
-    db.getAll('settings')
+    db.getAll('settings'),
+    db.getAll('projects')
   ])
 
   const safeSettings = settings.map(s => {
     if (s.key === 'llm_config' && s.value?.apiKey) {
       return { ...s, value: { ...s.value, apiKey: '***' } }
+    }
+    if (s.key === 'llm_configs' && Array.isArray(s.value)) {
+      return {
+        ...s,
+        value: s.value.map(c => c.apiKey ? { ...c, apiKey: '***' } : c)
+      }
     }
     return s
   })
@@ -22,9 +29,10 @@ export async function exportAllData() {
     stats: {
       ideas: ideas.length,
       dailyNotes: dailyNotes.length,
-      settings: settings.length
+      settings: settings.length,
+      projects: projects.length
     },
-    data: { ideas, dailyNotes, settings: safeSettings }
+    data: { ideas, dailyNotes, settings: safeSettings, projects }
   }
 
   return backup
@@ -114,10 +122,11 @@ export async function applyImport(backup, mode = 'merge') {
     await db.clear('ideas')
     await db.clear('dailyNotes')
     await db.clear('settings')
+    await db.clear('projects')
   }
 
-  const stats = { ideas: 0, dailyNotes: 0, settings: 0 }
-  const tx = db.transaction(['ideas', 'dailyNotes', 'settings'], 'readwrite')
+  const stats = { ideas: 0, dailyNotes: 0, settings: 0, projects: 0 }
+  const tx = db.transaction(['ideas', 'dailyNotes', 'settings', 'projects'], 'readwrite')
 
   for (const idea of backup.data.ideas || []) {
     if (!isValidIdea(idea)) continue
@@ -151,6 +160,16 @@ export async function applyImport(backup, mode = 'merge') {
     stats.settings++
   }
 
+  for (const project of backup.data.projects || []) {
+    if (stats.projects >= MAX_IMPORT_ROWS) break
+    if (mode === 'merge') {
+      const existing = await db.get('projects', project.id)
+      if (existing) continue
+    }
+    await tx.objectStore('projects').put(project)
+    stats.projects++
+  }
+
   await tx.done
   return stats
 }
@@ -170,4 +189,5 @@ export async function clearAllData() {
   await db.clear('ideas')
   await db.clear('dailyNotes')
   await db.clear('settings')
+  await db.clear('projects')
 }

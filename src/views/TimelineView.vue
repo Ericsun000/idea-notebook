@@ -14,6 +14,13 @@
           @click="viewFilter = f.key"
         >{{ f.label }}</button>
       </div>
+      <div class="tag-filter-bar" v-if="tagFilter">
+        <span class="tag-filter-label">标签筛选：</span>
+        <span class="tag-filter-chip">
+          {{ tagFilter }}
+          <button class="tag-filter-close" @click="tagFilter = ''" title="取消筛选">&times;</button>
+        </span>
+      </div>
       <template v-if="filteredGroupedIdeas.length">
         <section class="section" v-for="group in filteredGroupedIdeas" :key="group.date">
           <div class="date-header">
@@ -25,10 +32,12 @@
               v-for="(idea, i) in group.ideas"
               :key="idea.id"
               :idea="idea"
+              :active-tag="tagFilter"
               :class="'stagger-' + (Math.min(i, 4) + 1)"
               @delete="onDelete"
               @change-category="cat => onChangeCategory(idea.id, cat)"
               @toggle-completed="onToggleCompleted"
+              @tag-click="onTagClick"
             />
           </div>
         </section>
@@ -55,6 +64,7 @@ import EmptyState from '../components/EmptyState.vue'
 const store = useIdeaStore()
 const loading = ref(true)
 const viewFilter = ref('all')
+const tagFilter = ref('')
 
 const filters = [
   { key: 'all', label: '全部' },
@@ -69,10 +79,20 @@ onMounted(async () => {
   loading.value = false
 })
 
-function applyFilter(ideas) {
-  if (viewFilter.value === 'all') return ideas
-  const completed = viewFilter.value === 'completed'
-  return ideas.filter(i => !!i.completed === completed)
+function onTagClick(tag) {
+  tagFilter.value = tagFilter.value === tag ? '' : tag
+}
+
+function applyFilters(ideas) {
+  let result = ideas
+  if (viewFilter.value !== 'all') {
+    const completed = viewFilter.value === 'completed'
+    result = result.filter(i => !!i.completed === completed)
+  }
+  if (tagFilter.value) {
+    result = result.filter(i => i.tags && i.tags.includes(tagFilter.value))
+  }
+  return result
 }
 
 function groupByDate(ideas) {
@@ -93,7 +113,7 @@ function groupByDate(ideas) {
 }
 
 const filteredGroupedIdeas = computed(() => {
-  return groupByDate(applyFilter(store.allIdeas))
+  return groupByDate(applyFilters(store.allIdeas))
 })
 
 function formatDate(dateStr) {
@@ -169,6 +189,41 @@ async function onChangeCategory(id, category) {
 
 .filter-tab:active {
   transform: scale(0.96);
+}
+
+.tag-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 20px 10px;
+  font-size: var(--text-xs);
+}
+
+.tag-filter-label {
+  color: var(--color-text-tertiary);
+}
+
+.tag-filter-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px 3px 10px;
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  border-radius: var(--radius-full);
+  font-weight: 600;
+}
+
+.tag-filter-close {
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  color: var(--color-accent);
+  opacity: 0.6;
+}
+
+.tag-filter-close:active {
+  opacity: 1;
 }
 
 .section {

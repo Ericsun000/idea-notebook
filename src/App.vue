@@ -31,6 +31,12 @@
         </svg>
         <span class="tab-label">历史</span>
       </router-link>
+      <router-link to="/projects" class="tab-item" active-class="tab-active">
+        <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+        </svg>
+        <span class="tab-label">项目</span>
+      </router-link>
     </nav>
   </div>
 </template>
@@ -43,7 +49,7 @@ const router = useRouter()
 
 const showTabBar = computed(() => {
   const name = router.currentRoute.value.name
-  return name === 'home' || name === 'timeline' || name === 'history' || name === 'trash' || name === 'settings'
+  return name === 'home' || name === 'timeline' || name === 'history' || name === 'projects' || name === 'project-detail' || name === 'trash' || name === 'settings'
 })
 
 const transitionName = computed(() => {
@@ -80,7 +86,7 @@ const transitionName = computed(() => {
   display: flex;
   align-items: center;
   justify-content: space-around;
-  padding: 6px 8px calc(6px + var(--safe-bottom));
+  padding: 2px 8px calc(2px + var(--safe-bottom));
   background: var(--color-surface);
   border-top: 1px solid var(--color-divider);
   backdrop-filter: blur(20px);
@@ -92,8 +98,8 @@ const transitionName = computed(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  padding: 6px 20px;
+  gap: 1px;
+  padding: 3px 14px;
   border-radius: var(--radius-sm);
   text-decoration: none;
   color: var(--color-text-tertiary);
@@ -105,8 +111,8 @@ const transitionName = computed(() => {
 }
 
 .tab-icon {
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
 }
 
 .tab-label {

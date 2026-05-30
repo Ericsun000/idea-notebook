@@ -42,15 +42,26 @@
           >{{ f.label }}</button>
         </div>
 
+        <div class="tag-filter-bar" v-if="store.tagFilter">
+          <span class="tag-filter-label">标签筛选：</span>
+          <span class="tag-filter-chip">
+            {{ store.tagFilter }}
+            <button class="tag-filter-close" @click="store.setTagFilter(store.tagFilter)" title="取消筛选">&times;</button>
+          </span>
+          <span class="tag-filter-count">{{ filteredIdeas.length }} 条</span>
+        </div>
+
         <div class="idea-list" v-if="filteredIdeas.length">
           <IdeaCard
             v-for="(idea, i) in filteredIdeas"
             :key="idea.id"
             :idea="idea"
+            :active-tag="store.tagFilter"
             :class="'stagger-' + (Math.min(i, 4) + 1)"
             @delete="onDelete"
             @change-category="cat => onChangeCategory(idea.id, cat)"
             @toggle-completed="onToggleCompleted"
+            @tag-click="onTagClick"
           />
         </div>
         <EmptyState
@@ -168,6 +179,10 @@ async function onChangeCategory(id, category) {
 
 async function onToggleCompleted(id) {
   await store.toggleCompleted(id)
+}
+
+function onTagClick(tag) {
+  store.setTagFilter(tag)
 }
 
 async function checkMilestone() {
@@ -289,6 +304,45 @@ async function generateNote() {
 
 .filter-tab:active {
   transform: scale(0.96);
+}
+
+.tag-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 20px 10px;
+  font-size: var(--text-xs);
+}
+
+.tag-filter-label {
+  color: var(--color-text-tertiary);
+}
+
+.tag-filter-chip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px 3px 10px;
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  border-radius: var(--radius-full);
+  font-weight: 600;
+}
+
+.tag-filter-close {
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  color: var(--color-accent);
+  opacity: 0.6;
+}
+
+.tag-filter-close:active {
+  opacity: 1;
+}
+
+.tag-filter-count {
+  color: var(--color-text-tertiary);
 }
 
 .idea-list {

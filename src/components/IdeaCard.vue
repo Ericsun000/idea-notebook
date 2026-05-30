@@ -13,6 +13,12 @@
       <p class="card-content">{{ idea.content }}</p>
       <div class="card-meta">
         <span class="meta-time">{{ formatTime(idea.timestamp) }}</span>
+        <router-link v-if="idea.projectId && projectName" :to="`/project/${idea.projectId}`" class="meta-project" @click.stop>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="12" height="12">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+          </svg>
+          {{ projectName }}
+        </router-link>
         <span v-if="idea.source === 'voice'" class="meta-voice" title="语音输入">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="12" height="12">
             <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
@@ -24,7 +30,7 @@
         <button class="meta-cat" @click.stop="openCategoryPicker">{{ idea.category }}</button>
       </div>
       <div class="card-tags" v-if="idea.tags.length">
-        <TagBadge v-for="tag in idea.tags" :key="tag" :tag="tag" />
+        <TagBadge v-for="tag in idea.tags" :key="tag" :tag="tag" :active="activeTag === tag" @click="$emit('tag-click', tag)" />
       </div>
       <div class="card-discussions" v-if="idea.discussion && idea.discussion.length">
         <button class="discussion-toggle" @click.stop="showDiscussion = !showDiscussion">
@@ -48,14 +54,23 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import TagBadge from './TagBadge.vue'
+import { useIdeaStore } from '../store.js'
 
 const props = defineProps({
-  idea: { type: Object, required: true }
+  idea: { type: Object, required: true },
+  activeTag: { type: String, default: '' }
 })
 
-const emit = defineEmits(['delete', 'change-category', 'toggle-completed'])
+const emit = defineEmits(['delete', 'change-category', 'toggle-completed', 'tag-click'])
+const store = useIdeaStore()
+
+const projectName = computed(() => {
+  if (!props.idea.projectId) return ''
+  const p = store.projects.find(x => x.id === props.idea.projectId)
+  return p ? p.name : ''
+})
 
 const showDiscussion = ref(false)
 
@@ -172,6 +187,23 @@ function confirmDelete() {
 .meta-time {
   font-size: var(--text-xs);
   color: var(--color-text-tertiary);
+}
+
+.meta-project {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: var(--text-xs);
+  color: var(--color-blue);
+  text-decoration: none;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--color-blue-soft);
+  transition: opacity var(--duration-fast);
+}
+
+.meta-project:active {
+  opacity: 0.7;
 }
 
 .meta-voice {

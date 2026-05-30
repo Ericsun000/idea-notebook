@@ -7,13 +7,29 @@
         </svg>
       </button>
       <h1 class="view-title">AI 助手</h1>
-      <span v-if="connected" class="status-badge connected">已连接</span>
+      <span v-if="configs.length" class="status-badge connected">{{ configs.length }} 个模型</span>
     </header>
 
     <div class="content-area">
-      <!-- 登录面板 -->
-      <div v-if="!connected" class="login-panel anim-fade-up">
-        <div class="login-hero">
+      <!-- 已连接模型列表 -->
+      <div v-if="configs.length" class="config-section anim-fade-up">
+        <div class="section-label">已连接的模型</div>
+        <div class="config-card" v-for="cfg in configs" :key="cfg.id">
+          <div class="config-body">
+            <span class="config-model">{{ cfg.label || cfg.model || '未命名' }}</span>
+            <span class="config-url">{{ cfg.baseUrl }}</span>
+            <span class="config-extra" v-if="cfg.model && cfg.model !== cfg.label">{{ cfg.model }}</span>
+          </div>
+          <button class="config-logout" @click="doLogoutConfig(cfg.id)" title="登出此模型">登出</button>
+        </div>
+        <button class="add-model-btn" @click="showAddForm = !showAddForm">
+          {{ showAddForm ? '收起' : '+ 添加模型' }}
+        </button>
+      </div>
+
+      <!-- 添加/登录面板 -->
+      <div v-if="!configs.length || showAddForm" class="login-panel anim-fade-up">
+        <div class="login-hero" v-if="!configs.length">
           <span class="login-icon">🤖</span>
           <p class="login-desc">连接大模型，解锁智能总结、标签校准、深度讨论功能</p>
         </div>
@@ -42,8 +58,19 @@
             v-model="modelId"
             type="text"
             class="form-input"
-            placeholder="deepseek-chat"
+            placeholder="deepseek-v4-flash"
           />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">连接名称</label>
+          <input
+            v-model="labelName"
+            type="text"
+            class="form-input"
+            :placeholder="selectedPreset.label"
+          />
+          <p class="form-hint">用于区分同一厂商的多个模型，如"DeepSeek Flash"和"DeepSeek Pro"</p>
         </div>
 
         <div class="form-group" v-if="!selectedPreset.noApiKey">
@@ -80,19 +107,17 @@
         <p class="privacy-hint">API Key 保存在本设备，仅发送至你配置的 API 地址</p>
       </div>
 
-      <!-- 功能面板 -->
-      <div v-else class="function-panel anim-fade-up">
-        <div class="model-info">
-          <span class="model-name">{{ config?.model || '未知模型' }}</span>
-          <span class="model-url">{{ config?.baseUrl }}</span>
-        </div>
-
+      <!-- 功能面板（有已连接模型时显示） -->
+      <div v-if="configs.length" class="function-panel anim-fade-up">
         <div class="action-card" @click="doSummarize">
           <div class="action-icon">📋</div>
           <div class="action-body">
             <h3 class="action-title">总结</h3>
             <p class="action-desc">帮我进行今日想法总结</p>
           </div>
+          <select class="model-selector" v-model="activeForSummarize" @click.stop>
+            <option v-for="cfg in configs" :key="cfg.id" :value="cfg.id">{{ cfg.label || cfg.model || '未命名' }}</option>
+          </select>
           <div v-if="summarizing" class="action-spinner"></div>
           <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="16" height="16" class="action-arrow">
             <polyline points="9 18 15 12 9 6"/>
@@ -105,6 +130,9 @@
             <h3 class="action-title">校准</h3>
             <p class="action-desc">标签、分类等系统识别校准</p>
           </div>
+          <select class="model-selector" v-model="activeForCalibrate" @click.stop>
+            <option v-for="cfg in configs" :key="cfg.id" :value="cfg.id">{{ cfg.label || cfg.model || '未命名' }}</option>
+          </select>
           <div v-if="calibrating" class="action-spinner"></div>
           <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="16" height="16" class="action-arrow">
             <polyline points="9 18 15 12 9 6"/>
@@ -117,6 +145,9 @@
             <h3 class="action-title">讨论</h3>
             <p class="action-desc">对每条想法生成 AI 评论</p>
           </div>
+          <select class="model-selector" v-model="activeForDiscuss" @click.stop>
+            <option v-for="cfg in configs" :key="cfg.id" :value="cfg.id">{{ cfg.label || cfg.model || '未命名' }}</option>
+          </select>
           <div v-if="discussing" class="action-spinner"></div>
           <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="16" height="16" class="action-arrow">
             <polyline points="9 18 15 12 9 6"/>
@@ -143,9 +174,19 @@
 
         <p v-if="actionError" class="error-msg">{{ actionError }}</p>
 
-        <div class="panel-footer">
-          <button class="btn-secondary" @click="doLogout">登出</button>
-          <button class="btn-secondary" @click="doSwitchModel">切换模型</button>
+        <div v-if="projects.length" class="project-summary-section">
+          <div class="section-divider">
+            <span class="section-label">项目总结</span>
+          </div>
+          <div class="project-pick-row">
+            <select v-model="activeProjectForSummary" class="form-select" @click.stop>
+              <option v-for="p in projects" :key="p.id" :value="p.id">{{ p.name }}</option>
+            </select>
+            <button class="btn-project-summary" :disabled="projectSummarizing" @click="doProjectSummary">
+              <span v-if="!projectSummarizing">🤖 生成项目总结</span>
+              <span v-else class="spinner-text">生成中...</span>
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -153,30 +194,41 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
-import { getLLMConfig, setLLMConfig, clearLLMConfig, MODEL_PRESETS } from '../settings'
-import { generateSmartSummary, calibrateIdeas, discussIdeasBatch, testConnection } from '../llm'
-import { getTodayIdeas, getTodayNote, updateIdea } from '../db'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import { getLLMConfigs, saveLLMConfig, removeLLMConfig, getActiveLLMIds, setActiveLLMId, MODEL_PRESETS } from '../settings'
+import { generateSmartSummary, calibrateIdeas, discussIdeasBatch, generateProjectSummary, testConnection } from '../llm'
+import { getTodayIdeas, getTodayNote, updateIdea, getIdeasByProject } from '../db'
 import { useIdeaStore } from '../store'
 
 const store = useIdeaStore()
+const route = useRoute()
 
 const presets = MODEL_PRESETS
 const selectedPreset = ref(presets[0])
 const baseUrl = ref(presets[0].baseUrl)
 const modelId = ref(presets[0].id)
+const labelName = ref('')
 const apiKey = ref('')
 const showKey = ref(false)
 const connecting = ref(false)
 const errorMsg = ref('')
-const connected = ref(false)
-const config = ref(null)
+const showAddForm = ref(false)
+
+const configs = ref([])
+const activeForSummarize = ref('')
+const activeForCalibrate = ref('')
+const activeForDiscuss = ref('')
 
 const summarizing = ref(false)
 const calibrating = ref(false)
 const discussing = ref(false)
+const projectSummarizing = ref(false)
 const result = ref(null)
 const actionError = ref('')
+
+const projects = computed(() => store.projects)
+const activeProjectForSummary = ref('')
 
 const canConnect = computed(() => {
   if (!baseUrl.value) return false
@@ -185,16 +237,42 @@ const canConnect = computed(() => {
 })
 
 onMounted(async () => {
-  const cfg = await getLLMConfig()
-  if (cfg) {
-    config.value = cfg
-    connected.value = true
+  await loadConfigs()
+  await store.loadProjects()
+  activeProjectForSummary.value = store.projects[0]?.id || ''
+  // If navigated from project detail with ?project=xxx param
+  const queryProjectId = route.query.project
+  if (queryProjectId) {
+    activeProjectForSummary.value = queryProjectId
   }
 })
+
+async function loadConfigs() {
+  configs.value = await getLLMConfigs()
+  const activeIds = await getActiveLLMIds()
+  // Set defaults: use stored selection or first available config
+  const firstId = configs.value[0]?.id || ''
+  activeForSummarize.value = activeIds.summarize || firstId
+  activeForCalibrate.value = activeIds.calibrate || firstId
+  activeForDiscuss.value = activeIds.discuss || firstId
+  if (!configs.value.length) showAddForm.value = true
+}
+
+function resolveConfig(action) {
+  const idMap = { summarize: activeForSummarize.value, calibrate: activeForCalibrate.value, discuss: activeForDiscuss.value }
+  const id = idMap[action]
+  return configs.value.find(c => c.id === id) || configs.value[0] || null
+}
+
+// Persist active selections
+watch(activeForSummarize, (val) => { if (val) setActiveLLMId('summarize', val) })
+watch(activeForCalibrate, (val) => { if (val) setActiveLLMId('calibrate', val) })
+watch(activeForDiscuss, (val) => { if (val) setActiveLLMId('discuss', val) })
 
 function onPresetChange() {
   baseUrl.value = selectedPreset.value.baseUrl || ''
   modelId.value = selectedPreset.value.id || ''
+  labelName.value = ''
 }
 
 async function doConnect() {
@@ -204,10 +282,21 @@ async function doConnect() {
     const noV1 = selectedPreset.value.noV1 || false
     const noApiKey = selectedPreset.value.noApiKey || false
     await testConnection(baseUrl.value, apiKey.value.trim(), noV1, noApiKey)
-    const cfg = { baseUrl: baseUrl.value, apiKey: apiKey.value.trim(), model: modelId.value || undefined, noV1, noApiKey }
-    await setLLMConfig(cfg)
-    config.value = cfg
-    connected.value = true
+    const label = labelName.value.trim() || selectedPreset.value.label
+    const cfg = {
+      baseUrl: baseUrl.value,
+      apiKey: apiKey.value.trim(),
+      model: modelId.value || undefined,
+      noV1,
+      noApiKey,
+      label
+    }
+    await saveLLMConfig(cfg)
+    await loadConfigs()
+    // Reset form
+    apiKey.value = ''
+    labelName.value = ''
+    showAddForm.value = false
     await store.loadToday()
   } catch (e) {
     errorMsg.value = e.message || '连接失败'
@@ -216,7 +305,16 @@ async function doConnect() {
   }
 }
 
+async function doLogoutConfig(id) {
+  await removeLLMConfig(id)
+  await loadConfigs()
+  result.value = null
+  actionError.value = ''
+}
+
 async function doSummarize() {
+  const cfg = resolveConfig('summarize')
+  if (!cfg) { actionError.value = '请先连接模型'; return }
   summarizing.value = true
   actionError.value = ''
   result.value = null
@@ -227,7 +325,7 @@ async function doSummarize() {
       return
     }
     const existing = await getTodayNote()
-    const { content: summary, usage, fallback } = await generateSmartSummary(ideas)
+    const { content: summary, usage, fallback } = await generateSmartSummary(ideas, cfg)
     const tokenInfo = usage ? ` (消耗 ${usage.total} tokens)` : ''
     const warnText = fallback ? '⚠️ AI 模型未返回有效结果，已使用本地规则生成。\n\n' : ''
     result.value = {
@@ -269,6 +367,8 @@ async function saveSummary(summary, ideas, existing) {
 }
 
 async function doCalibrate() {
+  const cfg = resolveConfig('calibrate')
+  if (!cfg) { actionError.value = '请先连接模型'; return }
   calibrating.value = true
   actionError.value = ''
   result.value = null
@@ -278,7 +378,7 @@ async function doCalibrate() {
       result.value = { type: 'info', title: '今天还没有想法', text: '先记录一些想法再校准' }
       return
     }
-    const calibration = await calibrateIdeas(ideas)
+    const calibration = await calibrateIdeas(ideas, cfg)
     if (calibration.fallback) {
       result.value = { type: 'fallback', title: '校准失败（本地生成）', text: '⚠️ AI 模型未返回有效结果，请检查模型配置或网络连接。' }
       return
@@ -332,6 +432,8 @@ async function applyCalibration(calibration, ideas) {
 }
 
 async function doDiscuss(supplement = false) {
+  const cfg = resolveConfig('discuss')
+  if (!cfg) { actionError.value = '请先连接模型'; return }
   discussing.value = true
   actionError.value = ''
   result.value = null
@@ -356,12 +458,12 @@ async function doDiscuss(supplement = false) {
 
     const prevDiscussions = {}
     for (const idea of targets) {
-      if (idea.discussion?.length) {
+      if (Array.isArray(idea.discussion) && idea.discussion.length) {
         prevDiscussions[idea.id] = idea.discussion
       }
     }
 
-    const newDiscussions = await discussIdeasBatch(targets, prevDiscussions)
+    const newDiscussions = await discussIdeasBatch(targets, prevDiscussions, cfg)
     let count = 0
     for (const d of newDiscussions) {
       const idea = ideas.find(i => i.id === d.id)
@@ -372,7 +474,7 @@ async function doDiscuss(supplement = false) {
     }
 
     await store.loadToday()
-    const modelName = config.value?.model || ''
+    const modelName = cfg.model || cfg.label || ''
     const tokenInfo = newDiscussions.length ? ` · 模型: ${modelName}` : ''
     const suffix = supplement && count > 0 ? `（${modelName} 补充）` : ''
     result.value = {
@@ -388,25 +490,30 @@ async function doDiscuss(supplement = false) {
   }
 }
 
-async function doLogout() {
-  await clearLLMConfig()
-  connected.value = false
-  config.value = null
-  apiKey.value = ''
-  result.value = null
+async function doProjectSummary() {
+  const pid = activeProjectForSummary.value
+  const cfg = configs.value.find(c => c.id === activeForDiscuss.value) || configs.value[0]
+  if (!pid) { actionError.value = '请先选择项目'; return }
+  if (!cfg) { actionError.value = '请先连接模型'; return }
+  projectSummarizing.value = true
   actionError.value = ''
-}
-
-function doSwitchModel() {
-  connected.value = false
-  config.value = null
-  apiKey.value = ''
   result.value = null
-  actionError.value = ''
-  const cfg = config.value
-  if (cfg) {
-    baseUrl.value = cfg.baseUrl || ''
-    modelId.value = cfg.model || ''
+  try {
+    const project = store.projects.find(p => p.id === pid)
+    const ideas = await getIdeasByProject(pid)
+    if (!project) { actionError.value = '项目不存在'; return }
+    const { content: summary, usage, fallback } = await generateProjectSummary(project, ideas, cfg)
+    const tokenInfo = usage ? ` (消耗 ${usage.total} tokens)` : ''
+    const warn = fallback ? '⚠️ AI 模型未返回有效结果。\n' : ''
+    result.value = {
+      type: fallback ? 'fallback' : 'success',
+      title: `${project.name} — 项目总结${fallback ? '（本地生成）' : tokenInfo}`,
+      text: warn + summary
+    }
+  } catch (e) {
+    actionError.value = e.message || '生成失败'
+  } finally {
+    projectSummarizing.value = false
   }
 }
 </script>
@@ -609,31 +716,96 @@ function doSwitchModel() {
   line-height: 1.5;
 }
 
+/* config section */
+.config-section {
+  max-width: 420px;
+  margin: 0 auto 16px;
+}
+
+.section-label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 10px;
+  padding: 0 4px;
+}
+
+.config-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  margin-bottom: 6px;
+  box-shadow: var(--shadow-sm);
+}
+
+.config-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.config-model {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.config-url {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+  word-break: break-all;
+}
+
+.config-extra {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+}
+
+.config-logout {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: #DC2626;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid #FEE2E2;
+  flex-shrink: 0;
+  transition: all var(--duration-fast);
+}
+
+.config-logout:active {
+  background: #FEF2F2;
+}
+
+.add-model-btn {
+  display: block;
+  width: 100%;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  border: 1.5px dashed var(--color-border);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  text-align: center;
+  transition: all var(--duration-fast);
+}
+
+.add-model-btn:active {
+  background: var(--color-surface-hover);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
 /* function panel */
 .function-panel {
   max-width: 420px;
   margin: 0 auto;
-}
-
-.model-info {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-bottom: 20px;
-  padding: 12px 16px;
-  background: var(--color-surface);
-  border-radius: var(--radius-md);
-}
-
-.model-name {
-  font-size: var(--text-base);
-  font-weight: 600;
-}
-
-.model-url {
-  font-size: var(--text-xs);
-  color: var(--color-text-tertiary);
-  word-break: break-all;
 }
 
 .action-card {
@@ -677,6 +849,28 @@ function doSwitchModel() {
 .action-arrow {
   color: var(--color-text-tertiary);
   flex-shrink: 0;
+}
+
+.model-selector {
+  font-size: var(--text-xs);
+  padding: 4px 24px 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%238B8680' stroke-width='2' stroke-linecap='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  flex-shrink: 0;
+  max-width: 120px;
+}
+
+.model-selector:focus {
+  outline: none;
+  border-color: var(--color-accent);
 }
 
 .action-spinner {
@@ -775,26 +969,51 @@ function doSwitchModel() {
   transform: scale(0.96);
 }
 
-.panel-footer {
-  margin-top: 24px;
-  display: flex;
-  gap: 10px;
+/* project summary */
+.project-summary-section {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-divider);
 }
 
-.btn-secondary {
-  flex: 1;
-  padding: 10px;
-  border-radius: var(--radius-sm);
-  border: 1.5px solid var(--color-border);
+.section-divider {
+  margin-bottom: 8px;
+}
+
+.section-divider .section-label {
   font-size: var(--text-sm);
-  font-weight: 500;
+  font-weight: 600;
   color: var(--color-text-secondary);
-  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.project-pick-row {
+  display: flex;
+  gap: 8px;
+}
+
+.project-pick-row .form-select {
+  flex: 1;
+}
+
+.btn-project-summary {
+  flex-shrink: 0;
+  padding: 10px 16px;
+  border-radius: var(--radius-md);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  white-space: nowrap;
   transition: all var(--duration-fast);
 }
 
-.btn-secondary:active {
-  background: var(--color-surface-hover);
-  border-color: var(--color-text-tertiary);
+.btn-project-summary:disabled {
+  opacity: 0.5;
+}
+
+.btn-project-summary:active:not(:disabled) {
+  transform: scale(0.98);
 }
 </style>
