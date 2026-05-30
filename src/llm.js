@@ -1,5 +1,18 @@
-import { getLLMConfig, isLLMConfigured } from './settings'
+import { getLLMConfig, isLLMConfigured, MODEL_PRESETS } from './settings'
 import { generateDailySummary } from './classifier'
+
+function cleanReasoningText(text) {
+  if (!text) return null
+  let cleaned = text.replace(/^Thinking Process:?\s*/im, '')
+  cleaned = cleaned.replace(/^\d+\.\s*\*\*[^*]+\*\*[:：]?\s*/gm, '')
+  const lines = cleaned.split('\n').filter(l => {
+    const t = l.trim()
+    if (!t) return true
+    if (/^\d+\.\s/.test(t) && /\b(Analyze|分析|考虑|检查|判断|确定|Identify|Consider|理解|评估|Request\b|Step\b)/i.test(t)) return false
+    return true
+  })
+  return lines.join('\n').trim() || text
+}
 
 function truncate(text, maxLen = 300) {
   if (!text || text.length <= maxLen) return text
@@ -11,7 +24,12 @@ async function callLLM(systemPrompt, userMessage, options = {}) {
   if (!config || !config.baseUrl) {
     throw new Error('LLM 未配置，请先在 AI 助手页面设置')
   }
-  if (!config.noApiKey && !config.apiKey) {
+
+  const preset = MODEL_PRESETS.find(p => p.baseUrl && config.baseUrl.startsWith(p.baseUrl)) || {}
+  const noV1 = config.noV1 ?? preset.noV1 ?? false
+  const noApiKey = config.noApiKey ?? preset.noApiKey ?? false
+
+  if (!noApiKey && !config.apiKey) {
     throw new Error('API Key 未配置，请先在 AI 助手页面设置')
   }
 
@@ -31,18 +49,21 @@ async function callLLM(systemPrompt, userMessage, options = {}) {
     body.response_format = response_format
   }
 
-  const baseUrl = config.baseUrl.replace(/\/+$/, '')
+  let baseUrl = config.baseUrl.replace(/\/+$/, '')
+  if (baseUrl.startsWith('/')) {
+    baseUrl = window.location.origin + baseUrl
+  }
   const urlObj = new URL(baseUrl)
   if (urlObj.protocol !== 'https:' && urlObj.hostname !== 'localhost' && urlObj.hostname !== '127.0.0.1') {
     throw new Error('安全警告：API Key 将通过不安全的 HTTP 传输，请使用 HTTPS 地址')
   }
 
-  const prefix = config.noV1 ? '' : '/v1'
+  const prefix = noV1 ? '' : '/v1'
   const response = await fetch(`${baseUrl}${prefix}/chat/completions`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(config.noApiKey ? {} : { 'Authorization': `Bearer ${config.apiKey}` })
+      ...(noApiKey ? {} : { 'Authorization': `Bearer ${config.apiKey}` })
     },
     body: JSON.stringify(body)
   })
@@ -56,8 +77,12 @@ async function callLLM(systemPrompt, userMessage, options = {}) {
   }
 
   const data = await response.json()
-  const content = data.choices?.[0]?.message?.content || null
+  const choice = data.choices?.[0]?.message || {}
+  const content = choice.content || choice.reasoning_content || null
   const usage = data.usage || null
+  if (!content) {
+    console.warn('LLM returned empty/null content. Full response:', data)
+  }
   return { content, usage }
 }
 
@@ -65,8 +90,12 @@ function parseJSONResponse(text) {
   if (!text) return null
   const cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim()
   try { return JSON.parse(cleaned) } catch {}
-  const match = cleaned.match(/\{[\s\S]*\}/)
-  if (match) { try { return JSON.parse(match[0]) } catch { return null } }
+  // 从混合文本中找 JSON：定位第一个 { 到最后一个 }
+  const start = cleaned.indexOf('{')
+  const end = cleaned.lastIndexOf('}')
+  if (start !== -1 && end > start) {
+    try { return JSON.parse(cleaned.slice(start, end + 1)) } catch {}
+  }
   return null
 }
 
@@ -81,7 +110,7 @@ function formatUsage(usage) {
 
 export async function generateSmartSummary(ideas) {
   if (!(await isLLMConfigured())) {
-    return { content: generateDailySummary(ideas), usage: null }
+    return { content: generateDailySummary(ideas), usage: null, fallback: true }
   }
 
   const ideasText = ideas.map(i =>
@@ -105,15 +134,17 @@ export async function generateSmartSummary(ideas) {
 
   try {
     const { content, usage } = await callLLM(systemPrompt, ideasText)
-    return { content: content || generateDailySummary(ideas), usage: formatUsage(usage) }
+    const cleaned = cleanReasoningText(content)
+    const fallback = !cleaned
+    return { content: cleaned || generateDailySummary(ideas), usage: formatUsage(usage), fallback }
   } catch {
-    return { content: generateDailySummary(ideas), usage: null }
+    return { content: generateDailySummary(ideas), usage: null, fallback: true }
   }
 }
 
 export async function calibrateIdeas(ideas) {
   if (!(await isLLMConfigured())) {
-    return { corrections: [], splits: [], usage: null }
+    return { corrections: [], splits: [], usage: null, fallback: true }
   }
 
   const ideasJSON = ideas.map(i => ({
@@ -143,13 +174,10 @@ export async function calibrateIdeas(ideas) {
     const { content, usage } = await callLLM(systemPrompt, JSON.stringify(ideasJSON),
       { temperature: 0.1, response_format: { type: 'json_object' } })
     const parsed = parseJSONResponse(content)
-    return {
-      corrections: parsed?.corrections || [],
-      splits: parsed?.splits || [],
-      usage: formatUsage(usage)
-    }
+    const fallback = !parsed
+    return { corrections: parsed?.corrections || [], splits: parsed?.splits || [], usage: formatUsage(usage), fallback }
   } catch {
-    return { corrections: [], splits: [], usage: null }
+    return { corrections: [], splits: [], usage: null, fallback: true }
   }
 }
 

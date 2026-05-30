@@ -70,6 +70,16 @@ npm run preview
 
 API Key 仅保存在本机 IndexedDB，不上传任何服务器。
 
+### 本地模型支持（开发中）
+
+支持 LM Studio、Ollama 等本地模型，通过 Vite 代理解决 CORS 问题：
+
+```bash
+npm run dev   # 本地开发，代理自动转发到 localhost:1234 (LM Studio) / localhost:11434 (Ollama)
+```
+
+> **已知问题**：reasoning 模型（如 qwen3.5-9b）通过 `reasoning_content` 输出，内容清洗尚不完善，总结/讨论质量不稳定。云端模型（DeepSeek、GLM 等）功能正常。
+
 ## License
 
 MIT

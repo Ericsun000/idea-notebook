@@ -4,6 +4,20 @@ import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
   base: '/idea-notebook/',
+  server: {
+    proxy: {
+      '/api/lmstudio': {
+        target: 'http://localhost:1234',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/lmstudio/, '/v1')
+      },
+      '/api/ollama': {
+        target: 'http://localhost:11434',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/ollama/, '')
+      }
+    }
+  },
   plugins: [
     vue(),
     VitePWA({

@@ -227,12 +227,13 @@ async function doSummarize() {
       return
     }
     const existing = await getTodayNote()
-    const { content: summary, usage } = await generateSmartSummary(ideas)
+    const { content: summary, usage, fallback } = await generateSmartSummary(ideas)
     const tokenInfo = usage ? ` (消耗 ${usage.total} tokens)` : ''
+    const warnText = fallback ? '⚠️ AI 模型未返回有效结果，已使用本地规则生成。\n\n' : ''
     result.value = {
-      type: 'success',
-      title: `今日总结${tokenInfo}`,
-      text: summary,
+      type: fallback ? 'fallback' : 'success',
+      title: `今日总结${fallback ? '（本地生成）' : tokenInfo}`,
+      text: warnText + summary,
       actions: [
         {
           label: existing ? '覆盖今日笔记' : '保存为今日笔记',
@@ -278,6 +279,10 @@ async function doCalibrate() {
       return
     }
     const calibration = await calibrateIdeas(ideas)
+    if (calibration.fallback) {
+      result.value = { type: 'fallback', title: '校准失败（本地生成）', text: '⚠️ AI 模型未返回有效结果，请检查模型配置或网络连接。' }
+      return
+    }
     const tokenInfo = calibration.usage ? ` (消耗 ${calibration.usage.total} tokens)` : ''
     const total = calibration.corrections.length + calibration.splits.length
     if (total === 0) {
@@ -705,8 +710,8 @@ function doSwitchModel() {
   border-left: 3px solid var(--color-green);
 }
 
-.result-card.info {
-  border-left: 3px solid var(--color-blue);
+.result-card.fallback {
+  border-left: 3px solid #F59E0B;
 }
 
 .result-header {

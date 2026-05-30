@@ -46,8 +46,8 @@ export const MODEL_PRESETS = [
   {
     id: '',
     label: '本地 Llama / Ollama',
-    baseUrl: 'http://localhost:11434',
-    description: '本地运行，完全离线',
+    baseUrl: '/api/ollama',
+    description: '本地运行，需通过 Vite 代理',
     noV1: true,
     noApiKey: true,
     customUrl: true,
@@ -56,8 +56,9 @@ export const MODEL_PRESETS = [
   {
     id: '',
     label: 'LM Studio',
-    baseUrl: 'http://localhost:1234',
-    description: '本地 LM Studio，完全离线',
+    baseUrl: '/api/lmstudio',
+    description: '本地 LM Studio，需通过 Vite 代理',
+    noV1: true,
     noApiKey: true,
     customUrl: true,
     customModel: true
@@ -88,7 +89,10 @@ export async function clearLLMConfig() {
 
 export async function isLLMConfigured() {
   const config = await getLLMConfig()
-  return !!(config && config.baseUrl && config.apiKey)
+  if (!config || !config.baseUrl) return false
+  if (config.apiKey || config.noApiKey) return true
+  const preset = MODEL_PRESETS.find(p => p.baseUrl && config.baseUrl.startsWith(p.baseUrl)) || {}
+  return !!preset.noApiKey
 }
 
 export { getSetting, setSetting, deleteSetting }
