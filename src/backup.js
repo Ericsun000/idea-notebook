@@ -8,6 +8,13 @@ export async function exportAllData() {
     db.getAll('settings')
   ])
 
+  const safeSettings = settings.map(s => {
+    if (s.key === 'llm_config' && s.value?.apiKey) {
+      return { ...s, value: { ...s.value, apiKey: '***' } }
+    }
+    return s
+  })
+
   const backup = {
     version: 1,
     exportedAt: new Date().toISOString(),
@@ -17,7 +24,7 @@ export async function exportAllData() {
       dailyNotes: dailyNotes.length,
       settings: settings.length
     },
-    data: { ideas, dailyNotes, settings }
+    data: { ideas, dailyNotes, settings: safeSettings }
   }
 
   return backup
@@ -86,6 +93,20 @@ export function readBackupFile(file) {
   })
 }
 
+function isValidIdea(obj) {
+  return obj && typeof obj.id === 'string' && typeof obj.content === 'string'
+}
+
+function isValidDailyNote(obj) {
+  return obj && typeof obj.date === 'string'
+}
+
+function isValidSetting(obj) {
+  return obj && typeof obj.key === 'string'
+}
+
+const MAX_IMPORT_ROWS = 50000
+
 export async function applyImport(backup, mode = 'merge') {
   const db = await getDB()
 
@@ -99,6 +120,8 @@ export async function applyImport(backup, mode = 'merge') {
   const tx = db.transaction(['ideas', 'dailyNotes', 'settings'], 'readwrite')
 
   for (const idea of backup.data.ideas || []) {
+    if (!isValidIdea(idea)) continue
+    if (stats.ideas >= MAX_IMPORT_ROWS) break
     if (mode === 'merge') {
       const existing = await db.get('ideas', idea.id)
       if (existing) continue
@@ -108,6 +131,8 @@ export async function applyImport(backup, mode = 'merge') {
   }
 
   for (const note of backup.data.dailyNotes || []) {
+    if (!isValidDailyNote(note)) continue
+    if (stats.dailyNotes >= MAX_IMPORT_ROWS) break
     if (mode === 'merge') {
       const existing = await db.get('dailyNotes', note.date)
       if (existing) continue
@@ -117,6 +142,7 @@ export async function applyImport(backup, mode = 'merge') {
   }
 
   for (const setting of backup.data.settings || []) {
+    if (!isValidSetting(setting)) continue
     if (mode === 'merge') {
       const existing = await db.get('settings', setting.key)
       if (existing) continue

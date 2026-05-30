@@ -24,6 +24,11 @@ async function callLLM(systemPrompt, userMessage, options = {}) {
   }
 
   const baseUrl = config.baseUrl.replace(/\/+$/, '')
+  const urlObj = new URL(baseUrl)
+  if (urlObj.protocol !== 'https:' && urlObj.hostname !== 'localhost' && urlObj.hostname !== '127.0.0.1') {
+    throw new Error('安全警告：API Key 将通过不安全的 HTTP 传输，请使用 HTTPS 地址')
+  }
+
   const response = await fetch(`${baseUrl}/v1/chat/completions`, {
     method: 'POST',
     headers: {
@@ -34,11 +39,11 @@ async function callLLM(systemPrompt, userMessage, options = {}) {
   })
 
   if (!response.ok) {
-    const errorText = await response.text()
     if (response.status === 401) {
       throw new Error('API Key 无效，请检查配置')
     }
-    throw new Error(`API 请求失败 (${response.status}): ${errorText}`)
+    console.error('API error details:', response.status, await response.text())
+    throw new Error(`API 请求失败 (${response.status})`)
   }
 
   const data = await response.json()

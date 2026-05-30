@@ -74,7 +74,7 @@
           <span v-else class="spinner-text">测试连接中...</span>
         </button>
         <p v-if="errorMsg" class="error-msg">{{ errorMsg }}</p>
-        <p class="privacy-hint">API Key 仅保存在本设备，不上传任何服务器</p>
+        <p class="privacy-hint">API Key 保存在本设备，仅发送至你配置的 API 地址</p>
       </div>
 
       <!-- 功能面板 -->
@@ -131,7 +131,8 @@
               </svg>
             </button>
           </div>
-          <div class="result-content" v-html="result.content"></div>
+          <div class="result-content" v-if="result.text">{{ result.text }}</div>
+          <div class="result-content" v-else v-html="result.content"></div>
           <div class="result-actions" v-if="result.actions">
             <button v-for="a in result.actions" :key="a.label" class="btn-result" :class="a.variant" @click="a.handler">{{ a.label }}</button>
           </div>
@@ -214,14 +215,14 @@ async function doSummarize() {
   try {
     const ideas = await getTodayIdeas()
     if (!ideas.length) {
-      result.value = { type: 'info', title: '今天还没有想法', content: '<p>先记录一些想法再回来总结吧</p>' }
+      result.value = { type: 'info', title: '今天还没有想法', text: '先记录一些想法再回来总结吧' }
       return
     }
     const summary = await generateSmartSummary(ideas)
     result.value = {
       type: 'success',
       title: '今日总结',
-      content: `<p>${summary}</p>`,
+      text: summary,
       actions: [
         { label: '保存为今日笔记', variant: 'primary', handler: () => saveSummary(summary, ideas) }
       ]
@@ -247,7 +248,7 @@ async function saveSummary(summary, ideas) {
     totalCount: ideas.length,
     generatedAt: Date.now()
   })
-  result.value = { type: 'success', title: '已保存', content: '<p>今日笔记已保存，可在历史页面查看</p>' }
+  result.value = { type: 'success', title: '已保存', text: '今日笔记已保存，可在历史页面查看' }
 }
 
 async function doCalibrate() {
@@ -257,13 +258,13 @@ async function doCalibrate() {
   try {
     const ideas = await getTodayIdeas()
     if (!ideas.length) {
-      result.value = { type: 'info', title: '今天还没有想法', content: '<p>先记录一些想法再校准</p>' }
+      result.value = { type: 'info', title: '今天还没有想法', text: '先记录一些想法再校准' }
       return
     }
     const calibration = await calibrateIdeas(ideas)
     const total = calibration.corrections.length + calibration.splits.length
     if (total === 0) {
-      result.value = { type: 'info', title: '校准完成', content: '<p>你的想法分类和标签看起来很准确，无需调整 👍</p>' }
+      result.value = { type: 'info', title: '校准完成', text: '你的想法分类和标签看起来很准确，无需调整 👍' }
       return
     }
     const items = []
@@ -271,12 +272,12 @@ async function doCalibrate() {
       const idea = ideas.find(i => i.id === c.id)
       const oldInfo = idea ? `[${idea.category}] ${idea.tags.join(', ')}` : ''
       const newInfo = `[${c.category}] ${c.tags.join(', ')}`
-      items.push(`<div class="calib-item"><span class="calib-old">${oldInfo}</span> → <span class="calib-new">${newInfo}</span></div>`)
+      items.push(`旧: ${oldInfo} → 新: ${newInfo}`)
     }
     result.value = {
       type: 'calibration',
       title: `发现 ${total} 处可优化`,
-      content: items.join(''),
+      text: items.join('\n'),
       actions: [
         { label: `应用修正 (${calibration.corrections.length})`, variant: 'primary', handler: () => applyCalibration(calibration, ideas) }
       ]
@@ -305,7 +306,7 @@ async function applyCalibration(calibration, ideas) {
     }
   }
   await store.loadToday()
-  result.value = { type: 'success', title: '修正已应用', content: `<p>已更新 ${calibration.corrections.length} 条标签和分类</p>` }
+  result.value = { type: 'success', title: '修正已应用', text: `已更新 ${calibration.corrections.length} 条标签和分类` }
 }
 
 async function doDiscuss() {
@@ -315,10 +316,10 @@ async function doDiscuss() {
   try {
     const ideas = await getTodayIdeas()
     if (!ideas.length) {
-      result.value = { type: 'info', title: '今天还没有想法', content: '<p>记录一些想法后再来讨论吧</p>' }
+      result.value = { type: 'info', title: '今天还没有想法', text: '记录一些想法后再来讨论吧' }
       return
     }
-    result.value = { type: 'info', title: '正在生成评论...', content: '<p>正在逐条分析你的想法，请稍候...</p>' }
+    result.value = { type: 'info', title: '正在生成评论...', text: '正在逐条分析你的想法，请稍候...' }
     let count = 0
     for (const idea of ideas) {
       if (idea.discussion) continue
@@ -332,7 +333,7 @@ async function doDiscuss() {
     result.value = {
       type: 'success',
       title: '讨论完成',
-      content: `<p>已为 ${count} 条想法生成 AI 评论。返回首页查看每条想法下方的讨论内容。</p>`
+      text: `已为 ${count} 条想法生成 AI 评论。返回首页查看每条想法下方的讨论内容。`
     }
   } catch (e) {
     actionError.value = e.message || '讨论生成失败'
