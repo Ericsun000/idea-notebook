@@ -57,7 +57,7 @@ export async function addIdea({ content, category, tags, source = 'text', voiceD
     completed: false,
     deleted: false,
     deletedAt: null,
-    discussion: null
+    discussion: []
   }
   await db.add('ideas', idea)
   return idea

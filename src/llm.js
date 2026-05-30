@@ -1,5 +1,10 @@
 import { getLLMConfig, isLLMConfigured } from './settings'
-import { classify, extractTags, generateDailySummary } from './classifier'
+import { generateDailySummary } from './classifier'
+
+function truncate(text, maxLen = 300) {
+  if (!text || text.length <= maxLen) return text
+  return text.slice(0, maxLen) + '...'
+}
 
 async function callLLM(systemPrompt, userMessage, options = {}) {
   const config = await getLLMConfig()
@@ -7,7 +12,7 @@ async function callLLM(systemPrompt, userMessage, options = {}) {
     throw new Error('LLM 未配置，请先在 AI 助手页面设置')
   }
 
-  const { model, temperature = 0.3, maxTokens = 2048, response_format } = options
+  const { model, temperature = 0.3, maxTokens = 1024, response_format } = options
 
   const body = {
     model: model || config.model || 'deepseek-chat',
@@ -47,112 +52,117 @@ async function callLLM(systemPrompt, userMessage, options = {}) {
   }
 
   const data = await response.json()
-  return data.choices?.[0]?.message?.content || null
+  const content = data.choices?.[0]?.message?.content || null
+  const usage = data.usage || null
+  return { content, usage }
 }
 
 function parseJSONResponse(text) {
   if (!text) return null
   const cleaned = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim()
-  try {
-    return JSON.parse(cleaned)
-  } catch {
-    const match = cleaned.match(/\{[\s\S]*\}/)
-    if (match) {
-      try {
-        return JSON.parse(match[0])
-      } catch {
-        return null
-      }
-    }
-    return null
+  try { return JSON.parse(cleaned) } catch {}
+  const match = cleaned.match(/\{[\s\S]*\}/)
+  if (match) { try { return JSON.parse(match[0]) } catch { return null } }
+  return null
+}
+
+function formatUsage(usage) {
+  if (!usage) return null
+  return {
+    prompt: usage.prompt_tokens || 0,
+    completion: usage.completion_tokens || 0,
+    total: usage.total_tokens || 0
   }
 }
 
 export async function generateSmartSummary(ideas) {
   if (!(await isLLMConfigured())) {
-    return generateDailySummary(ideas)
+    return { content: generateDailySummary(ideas), usage: null }
   }
 
   const ideasText = ideas.map((i, idx) =>
-    `${idx + 1}. [${i.category}] ${i.content} 标签: ${i.tags.join(', ')}`
+    `${idx + 1}. [${i.category}] ${truncate(i.content)}`
   ).join('\n')
 
-  const systemPrompt = `你是一个思维整理助手。用户今天记录了一些想法和灵感，请根据这些内容生成一段自然、温暖、有洞察力的每日总结。
-要求：
-1. 用中文
-2. 150-300 字
-3. 先概括今天的思维主题
-4. 指出值得关注的亮点或趋势
-5. 给出一个温和的建议或鼓励
-6. 不要逐条罗列，而是整合叙述`
+  const systemPrompt = `你是思维整理助手。根据用户今日想法生成一段 150-300 字的每日总结。用中文，概括思维主题，指出亮点或趋势，给一条温和建议。整合叙述，不要逐条罗列。`
 
   try {
-    const result = await callLLM(systemPrompt, ideasText)
-    return result || generateDailySummary(ideas)
+    const { content, usage } = await callLLM(systemPrompt, ideasText)
+    return { content: content || generateDailySummary(ideas), usage: formatUsage(usage) }
   } catch {
-    return generateDailySummary(ideas)
+    return { content: generateDailySummary(ideas), usage: null }
   }
 }
 
 export async function calibrateIdeas(ideas) {
   if (!(await isLLMConfigured())) {
-    return { corrections: [], splits: [] }
+    return { corrections: [], splits: [], usage: null }
   }
 
   const ideasJSON = ideas.map(i => ({
     id: i.id,
-    content: i.content,
+    content: truncate(i.content),
     currentCategory: i.category,
     currentTags: i.tags
   }))
 
-  const systemPrompt = `你是一个数据分析师。检查以下想法列表，判断各项是否正确分类、标签是否合适、是否存在应该拆分为多条的想法。
-返回严格 JSON（不要包含 markdown 标记）：
-{
-  "corrections": [
-    { "id": "xxx", "category": "新分类", "tags": ["标签1", "标签2"] }
-  ],
-  "splits": [
-    { "id": "xxx", "reason": "拆分原因", "parts": ["第1部分", "第2部分"] }
-  ]
-}
-分类只能是：工作、生活、学习、创作、其他。标签从常用标签中选择：灵感、待办、疑问、发现、计划、学习、脑洞、想法。
-只返回确实需要修改的条目，不需要修改的不要返回。如果没有需要修改的，返回空数组。`
+  const systemPrompt = `你是数据分析师。检查想法列表，修正分类和标签。返回纯 JSON（无 markdown）：
+{"corrections":[{"id":"xxx","category":"新分类","tags":["标签1"]}],"splits":[{"id":"xxx","reason":"原因","parts":["部分1"]}]}
+分类限：工作、生活、学习、创作、其他。标签从：灵感、待办、疑问、发现、计划、学习、脑洞、想法 中选择。只返回需修改的条目，无需修改返回空数组。`
 
   try {
-    const result = await callLLM(systemPrompt, JSON.stringify(ideasJSON, null, 2),
+    const { content, usage } = await callLLM(systemPrompt, JSON.stringify(ideasJSON),
       { temperature: 0.1, response_format: { type: 'json_object' } })
-    const parsed = parseJSONResponse(result)
-    if (parsed && (parsed.corrections || parsed.splits)) {
-      return {
-        corrections: parsed.corrections || [],
-        splits: parsed.splits || []
-      }
+    const parsed = parseJSONResponse(content)
+    return {
+      corrections: parsed?.corrections || [],
+      splits: parsed?.splits || [],
+      usage: formatUsage(usage)
     }
-    return { corrections: [], splits: [] }
   } catch {
-    return { corrections: [], splits: [] }
+    return { corrections: [], splits: [], usage: null }
   }
 }
 
-export async function discussIdea(content, category, tags) {
-  if (!(await isLLMConfigured())) return null
+export async function discussIdeasBatch(ideas, previousDiscussions = {}) {
+  if (!(await isLLMConfigured())) return []
 
-  const systemPrompt = `你是一个思维伙伴。用户记录了一个想法，请提出有价值的评论、延伸思考或实践建议。
-要求：
-1. 用中文
-2. 100-300 字
-3. 风格：友善、有深度、启发思考
-4. 可以提出反问来激发更深入的思考
-5. 可以建议相关的书籍、工具或方法
-6. 格式：自然段落，不要列表或编号`
+  const config = await getLLMConfig()
+  const modelName = config?.model || 'unknown'
 
-  const context = `分类：${category}\n标签：${tags.join(', ')}\n想法：${content}`
+  const ideasJSON = ideas.map(i => {
+    const prev = previousDiscussions[i.id] || []
+    const prevContext = prev.length > 0
+      ? `\n已有评论：${prev.map(d => `[${d.model}] ${d.content}`).join(' | ')}`
+      : ''
+    return {
+      id: i.id,
+      content: truncate(i.content),
+      category: i.category,
+      tags: i.tags,
+      hasPrevious: prev.length > 0
+    }
+  })
+
+  const systemPrompt = `你是一个思维伙伴。对每条想法给出 80-200 字的评论。用中文，友善有深度。
+${previousDiscussions && Object.values(previousDiscussions).some(a => a.length) ? '部分想法已有其他模型的评论，你可以补充新角度或提出不同观点，但不要重复已有内容。' : ''}
+返回纯 JSON：{"discussions":[{"id":"想法ID","content":"评论内容"}]}`
 
   try {
-    return await callLLM(systemPrompt, context, { temperature: 0.6 })
+    const { content } = await callLLM(systemPrompt, JSON.stringify(ideasJSON),
+      { temperature: 0.6, maxTokens: 2048 })
+    const parsed = parseJSONResponse(content)
+    if (parsed?.discussions) {
+      return parsed.discussions.map(d => ({
+        id: d.id,
+        model: modelName,
+        content: d.content,
+        timestamp: Date.now()
+      }))
+    }
+    return []
   } catch {
-    return null
+    return []
   }
 }
 
@@ -160,11 +170,7 @@ export async function testConnection(baseUrl, apiKey) {
   const url = baseUrl.replace(/\/+$/, '')
   const response = await fetch(`${url}/v1/models`, {
     method: 'GET',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`
-    }
+    headers: { 'Authorization': `Bearer ${apiKey}` }
   })
   return response.ok
 }
-
-export { callLLM }

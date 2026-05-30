@@ -26,13 +26,17 @@
       <div class="card-tags" v-if="idea.tags.length">
         <TagBadge v-for="tag in idea.tags" :key="tag" :tag="tag" />
       </div>
-      <div class="card-discussion" v-if="idea.discussion && !discussionCollapsed">
-        <div class="discussion-label">🤖 AI 评论</div>
-        <p class="discussion-text">{{ idea.discussion }}</p>
+      <div class="card-discussions" v-if="idea.discussion && idea.discussion.length">
+        <button class="discussion-toggle" @click.stop="showDiscussion = !showDiscussion">
+          🤖 {{ showDiscussion ? '收起' : '查看' }} AI 评论 ({{ idea.discussion.length }})
+        </button>
+        <div class="discussion-list" v-if="showDiscussion">
+          <div class="discussion-bubble" v-for="(d, di) in idea.discussion" :key="di">
+            <div class="discussion-label">{{ d.model }}</div>
+            <p class="discussion-text">{{ d.content }}</p>
+          </div>
+        </div>
       </div>
-      <button class="discussion-toggle" v-if="idea.discussion" @click.stop="discussionCollapsed = !discussionCollapsed">
-        {{ discussionCollapsed ? `🤖 查看 AI 评论` : '收起评论' }}
-      </button>
     </div>
     <button class="card-delete" @click="confirmDelete" aria-label="删除">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" width="14" height="14">
@@ -53,7 +57,7 @@ const props = defineProps({
 
 const emit = defineEmits(['delete', 'change-category', 'toggle-completed'])
 
-const discussionCollapsed = ref(true)
+const showDiscussion = ref(false)
 
 const CATEGORIES = ['工作', '生活', '学习', '创作', '其他']
 
@@ -203,28 +207,11 @@ function confirmDelete() {
   flex-wrap: wrap;
 }
 
-.card-discussion {
-  margin-top: 10px;
-  padding: 10px 12px;
-  background: var(--color-blue-soft);
-  border-radius: var(--radius-sm);
-}
-
-.discussion-label {
-  font-size: var(--text-xs);
-  font-weight: 600;
-  color: var(--color-blue);
-  margin-bottom: 4px;
-}
-
-.discussion-text {
-  font-size: var(--text-sm);
-  line-height: 1.6;
-  color: var(--color-text);
+.card-discussions {
+  margin-top: 8px;
 }
 
 .discussion-toggle {
-  margin-top: 6px;
   font-size: var(--text-xs);
   color: var(--color-blue);
   padding: 4px 0;
@@ -233,6 +220,33 @@ function confirmDelete() {
 
 .discussion-toggle:active {
   opacity: 0.7;
+}
+
+.discussion-list {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.discussion-bubble {
+  padding: 10px 12px;
+  background: var(--color-blue-soft);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--color-blue);
+}
+
+.discussion-label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-blue);
+  margin-bottom: 3px;
+}
+
+.discussion-text {
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--color-text);
 }
 
 .card-delete {

@@ -152,8 +152,8 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { getLLMConfig, setLLMConfig, clearLLMConfig, MODEL_PRESETS } from '../settings'
-import { generateSmartSummary, calibrateIdeas, discussIdea, testConnection } from '../llm'
-import { getTodayIdeas, updateIdea } from '../db'
+import { generateSmartSummary, calibrateIdeas, discussIdeasBatch, testConnection } from '../llm'
+import { getTodayIdeas, getTodayNote, updateIdea } from '../db'
 import { useIdeaStore } from '../store'
 
 const store = useIdeaStore()
@@ -218,13 +218,19 @@ async function doSummarize() {
       result.value = { type: 'info', title: '今天还没有想法', text: '先记录一些想法再回来总结吧' }
       return
     }
-    const summary = await generateSmartSummary(ideas)
+    const existing = await getTodayNote()
+    const { content: summary, usage } = await generateSmartSummary(ideas)
+    const tokenInfo = usage ? ` (消耗 ${usage.total} tokens)` : ''
     result.value = {
       type: 'success',
-      title: '今日总结',
+      title: `今日总结${tokenInfo}`,
       text: summary,
       actions: [
-        { label: '保存为今日笔记', variant: 'primary', handler: () => saveSummary(summary, ideas) }
+        {
+          label: existing ? '覆盖今日笔记' : '保存为今日笔记',
+          variant: 'primary',
+          handler: () => saveSummary(summary, ideas, existing)
+        }
       ]
     }
   } catch (e) {
@@ -234,7 +240,8 @@ async function doSummarize() {
   }
 }
 
-async function saveSummary(summary, ideas) {
+async function saveSummary(summary, ideas, existing) {
+  if (existing && !confirm('今日已有笔记，是否覆盖？')) return
   const { saveDailyNote } = await import('../db')
   const categoryStats = {}
   for (const idea of ideas) {
@@ -248,7 +255,8 @@ async function saveSummary(summary, ideas) {
     totalCount: ideas.length,
     generatedAt: Date.now()
   })
-  result.value = { type: 'success', title: '已保存', text: '今日笔记已保存，可在历史页面查看' }
+  const msg = existing ? '今日笔记已覆盖更新，可在历史页面查看' : '今日笔记已保存，可在历史页面查看'
+  result.value = { type: 'success', title: '已保存', text: msg }
 }
 
 async function doCalibrate() {
@@ -262,9 +270,10 @@ async function doCalibrate() {
       return
     }
     const calibration = await calibrateIdeas(ideas)
+    const tokenInfo = calibration.usage ? ` (消耗 ${calibration.usage.total} tokens)` : ''
     const total = calibration.corrections.length + calibration.splits.length
     if (total === 0) {
-      result.value = { type: 'info', title: '校准完成', text: '你的想法分类和标签看起来很准确，无需调整 👍' }
+      result.value = { type: 'info', title: `校准完成${tokenInfo}`, text: '你的想法分类和标签看起来很准确，无需调整 👍' }
       return
     }
     const items = []
@@ -276,7 +285,7 @@ async function doCalibrate() {
     }
     result.value = {
       type: 'calibration',
-      title: `发现 ${total} 处可优化`,
+      title: `发现 ${total} 处可优化${tokenInfo}`,
       text: items.join('\n'),
       actions: [
         { label: `应用修正 (${calibration.corrections.length})`, variant: 'primary', handler: () => applyCalibration(calibration, ideas) }
@@ -309,7 +318,7 @@ async function applyCalibration(calibration, ideas) {
   result.value = { type: 'success', title: '修正已应用', text: `已更新 ${calibration.corrections.length} 条标签和分类` }
 }
 
-async function doDiscuss() {
+async function doDiscuss(supplement = false) {
   discussing.value = true
   actionError.value = ''
   result.value = null
@@ -319,21 +328,45 @@ async function doDiscuss() {
       result.value = { type: 'info', title: '今天还没有想法', text: '记录一些想法后再来讨论吧' }
       return
     }
-    result.value = { type: 'info', title: '正在生成评论...', text: '正在逐条分析你的想法，请稍候...' }
-    let count = 0
-    for (const idea of ideas) {
-      if (idea.discussion) continue
-      const comment = await discussIdea(idea.content, idea.category, idea.tags)
-      if (comment) {
-        await updateIdea(idea.id, { discussion: comment })
-        count++
+
+    const targets = supplement ? ideas : ideas.filter(i => !i.discussion || !i.discussion.length)
+    if (!targets.length) {
+      result.value = {
+        type: 'info', title: '所有想法已有讨论',
+        text: '每条想法都已有 AI 评论。点击"补充讨论"可让当前模型基于已有评论追加新观点。',
+        actions: [{ label: '补充讨论', variant: 'primary', handler: () => doDiscuss(true) }]
+      }
+      return
+    }
+
+    result.value = { type: 'info', title: '正在生成评论...', text: `正在分析 ${targets.length} 条想法，请稍候...` }
+
+    const prevDiscussions = {}
+    for (const idea of targets) {
+      if (idea.discussion?.length) {
+        prevDiscussions[idea.id] = idea.discussion
       }
     }
+
+    const newDiscussions = await discussIdeasBatch(targets, prevDiscussions)
+    let count = 0
+    for (const d of newDiscussions) {
+      const idea = ideas.find(i => i.id === d.id)
+      if (!idea) continue
+      const existing = Array.isArray(idea.discussion) ? idea.discussion : []
+      await updateIdea(d.id, { discussion: [...existing, d] })
+      count++
+    }
+
     await store.loadToday()
+    const modelName = config.value?.model || ''
+    const tokenInfo = newDiscussions.length ? ` · 模型: ${modelName}` : ''
+    const suffix = supplement && count > 0 ? `（${modelName} 补充）` : ''
     result.value = {
       type: 'success',
-      title: '讨论完成',
-      text: `已为 ${count} 条想法生成 AI 评论。返回首页查看每条想法下方的讨论内容。`
+      title: `讨论完成${suffix}`,
+      text: `已为 ${count} 条想法生成评论${tokenInfo}。返回首页查看每条想法下方的讨论内容。`,
+      actions: supplement ? [] : [{ label: '补充讨论', variant: 'primary', handler: () => doDiscuss(true) }]
     }
   } catch (e) {
     actionError.value = e.message || '讨论生成失败'
