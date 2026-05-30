@@ -175,6 +175,21 @@ export async function testConnection(baseUrl, apiKey, noV1 = false, noApiKey = f
   const prefix = noV1 ? '' : '/v1'
   const modelsUrl = noV1 ? `${url}/models` : `${url}${prefix}/models`
   const headers = noApiKey ? {} : { 'Authorization': `Bearer ${apiKey}` }
-  const response = await fetch(modelsUrl, { method: 'GET', headers })
-  return response.ok
+
+  try {
+    const response = await fetch(modelsUrl, { method: 'GET', headers })
+    if (!response.ok) {
+      throw new Error(`服务器返回 ${response.status}，请检查 URL 和端口是否正确`)
+    }
+    return true
+  } catch (e) {
+    if (e.message.includes('Failed to fetch') || e.name === 'TypeError') {
+      const isLocal = url.includes('localhost') || url.includes('127.0.0.1')
+      if (isLocal) {
+        throw new Error(`无法连接到 ${url}\n请确认：\n1. LM Studio / Ollama 已启动\n2. 端口号正确\n3. Server 开关已打开`)
+      }
+      throw new Error(`无法连接到 ${url}\n请检查网络连接和 Base URL`)
+    }
+    throw e
+  }
 }

@@ -203,8 +203,7 @@ async function doConnect() {
   try {
     const noV1 = selectedPreset.value.noV1 || false
     const noApiKey = selectedPreset.value.noApiKey || false
-    const ok = await testConnection(baseUrl.value, apiKey.value.trim(), noV1, noApiKey)
-    if (!ok) throw new Error('连接失败，请检查 Base URL 和 API Key')
+    await testConnection(baseUrl.value, apiKey.value.trim(), noV1, noApiKey)
     const cfg = { baseUrl: baseUrl.value, apiKey: apiKey.value.trim(), model: modelId.value || undefined, noV1, noApiKey }
     await setLLMConfig(cfg)
     config.value = cfg
