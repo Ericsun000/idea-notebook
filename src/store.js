@@ -1,5 +1,9 @@
 import { defineStore } from 'pinia'
-import { addIdea, deleteIdea, updateIdea, getTodayIdeas, getTodayNote, saveDailyNote, getAllIdeas, getAllDailyNotes, getIdeasByDate } from './db'
+import {
+  addIdea, softDeleteIdea, updateIdea, getTodayIdeas, getTodayNote,
+  saveDailyNote, getAllIdeas, getAllDailyNotes, getIdeasByDate,
+  getTrashIdeas, restoreIdea, permanentlyDeleteIdea, purgeOldTrash
+} from './db'
 import { classify, extractTags, generateDailySummary } from './classifier'
 
 export const useIdeaStore = defineStore('ideas', {
@@ -8,14 +12,25 @@ export const useIdeaStore = defineStore('ideas', {
     todayNote: null,
     allIdeas: [],
     allNotes: [],
-    loading: false
+    trashIdeas: [],
+    loading: false,
+    viewFilter: 'all'
   }),
+
+  getters: {
+    filteredTodayIdeas: (state) => {
+      if (state.viewFilter === 'all') return state.todayIdeas
+      const completed = state.viewFilter === 'completed'
+      return state.todayIdeas.filter(i => !!i.completed === completed)
+    }
+  },
 
   actions: {
     async loadToday() {
       this.loading = true
       this.todayIdeas = await getTodayIdeas()
       this.todayNote = await getTodayNote() || null
+      await purgeOldTrash()
       this.loading = false
     },
 
@@ -25,6 +40,25 @@ export const useIdeaStore = defineStore('ideas', {
 
     async loadAllNotes() {
       this.allNotes = await getAllDailyNotes()
+    },
+
+    async loadTrash() {
+      this.trashIdeas = await getTrashIdeas()
+    },
+
+    async toggleCompleted(id) {
+      const idea = this.todayIdeas.find(i => i.id === id)
+      if (idea) {
+        const updated = await updateIdea(id, { completed: !idea.completed })
+        if (updated) {
+          const idx = this.todayIdeas.findIndex(i => i.id === id)
+          if (idx !== -1) this.todayIdeas[idx] = updated
+        }
+      }
+    },
+
+    setFilter(filter) {
+      this.viewFilter = filter
     },
 
     async createIdea(text) {
@@ -54,9 +88,34 @@ export const useIdeaStore = defineStore('ideas', {
       return idea
     },
 
-    async removeIdea(id) {
-      await deleteIdea(id)
+    async deleteIdea(id) {
+      await softDeleteIdea(id)
       this.todayIdeas = this.todayIdeas.filter(i => i.id !== id)
+      this.allIdeas = this.allIdeas.filter(i => i.id !== id)
+    },
+
+    async undoDelete(id) {
+      await restoreIdea(id)
+      const trashed = this.trashIdeas.find(i => i.id === id)
+      if (trashed) {
+        this.trashIdeas = this.trashIdeas.filter(i => i.id !== id)
+        const today = new Date().toISOString().slice(0, 10)
+        if (trashed.date === today) {
+          this.todayIdeas.unshift(trashed)
+        }
+      }
+    },
+
+    async permanentlyDeleteIdea(id) {
+      await permanentlyDeleteIdea(id)
+      this.trashIdeas = this.trashIdeas.filter(i => i.id !== id)
+    },
+
+    async emptyTrash() {
+      for (const idea of this.trashIdeas) {
+        await permanentlyDeleteIdea(idea.id)
+      }
+      this.trashIdeas = []
     },
 
     async updateIdeaCat(id, category) {

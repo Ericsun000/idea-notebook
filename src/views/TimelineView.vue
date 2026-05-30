@@ -5,8 +5,17 @@
     </header>
 
     <div class="content-area" v-if="!loading">
-      <template v-if="groupedIdeas.length">
-        <section class="section" v-for="group in groupedIdeas" :key="group.date">
+      <div class="filter-tabs" v-if="allIdeas.length">
+        <button
+          v-for="f in filters"
+          :key="f.key"
+          class="filter-tab"
+          :class="{ active: viewFilter === f.key }"
+          @click="viewFilter = f.key"
+        >{{ f.label }}</button>
+      </div>
+      <template v-if="filteredGroupedIdeas.length">
+        <section class="section" v-for="group in filteredGroupedIdeas" :key="group.date">
           <div class="date-header">
             <span class="date-label">{{ group.label }}</span>
             <span class="date-count">{{ group.ideas.length }} 条</span>
@@ -19,6 +28,7 @@
               :class="'stagger-' + (Math.min(i, 4) + 1)"
               @delete="onDelete"
               @change-category="cat => onChangeCategory(idea.id, cat)"
+              @toggle-completed="onToggleCompleted"
             />
           </div>
         </section>
@@ -44,15 +54,30 @@ import EmptyState from '../components/EmptyState.vue'
 
 const store = useIdeaStore()
 const loading = ref(true)
+const viewFilter = ref('all')
+
+const filters = [
+  { key: 'all', label: '全部' },
+  { key: 'active', label: '进行中' },
+  { key: 'completed', label: '已完成' }
+]
+
+const allIdeas = computed(() => store.allIdeas)
 
 onMounted(async () => {
   await store.loadAll()
   loading.value = false
 })
 
-const groupedIdeas = computed(() => {
+function applyFilter(ideas) {
+  if (viewFilter.value === 'all') return ideas
+  const completed = viewFilter.value === 'completed'
+  return ideas.filter(i => !!i.completed === completed)
+}
+
+function groupByDate(ideas) {
   const map = {}
-  for (const idea of store.allIdeas) {
+  for (const idea of ideas) {
     if (!map[idea.date]) map[idea.date] = []
     map[idea.date].push(idea)
   }
@@ -60,11 +85,15 @@ const groupedIdeas = computed(() => {
   const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10)
   return Object.entries(map)
     .sort(([a], [b]) => b.localeCompare(a))
-    .map(([date, ideas]) => ({
+    .map(([date, dateIdeas]) => ({
       date,
       label: date === today ? '今天' : date === yesterday ? '昨天' : formatDate(date),
-      ideas
+      ideas: dateIdeas
     }))
+}
+
+const filteredGroupedIdeas = computed(() => {
+  return groupByDate(applyFilter(store.allIdeas))
 })
 
 function formatDate(dateStr) {
@@ -72,8 +101,20 @@ function formatDate(dateStr) {
   return d.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' })
 }
 
+async function onToggleCompleted(id) {
+  const idea = store.allIdeas.find(i => i.id === id)
+  if (idea) {
+    const { updateIdea } = await import('../db.js')
+    const updated = await updateIdea(id, { completed: !idea.completed })
+    if (updated) {
+      const idx = store.allIdeas.findIndex(i => i.id === id)
+      if (idx !== -1) store.allIdeas[idx] = updated
+    }
+  }
+}
+
 async function onDelete(id) {
-  await store.removeIdea(id)
+  await store.deleteIdea(id)
 }
 
 async function onChangeCategory(id, category) {
@@ -103,6 +144,31 @@ async function onChangeCategory(id, category) {
   flex: 1;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+}
+
+.filter-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 0 16px 12px;
+}
+
+.filter-tab {
+  padding: 4px 14px;
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-hover);
+  transition: all var(--duration-fast);
+}
+
+.filter-tab.active {
+  background: var(--color-accent);
+  color: #fff;
+}
+
+.filter-tab:active {
+  transform: scale(0.96);
 }
 
 .section {

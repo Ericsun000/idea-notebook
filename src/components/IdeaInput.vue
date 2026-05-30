@@ -37,6 +37,22 @@
         {{ voice.transcript.value }}
       </div>
     </transition>
+    <transition name="expand">
+      <div v-if="showSplitBanner && splitCandidates" class="split-banner">
+        <div class="split-info">检测到 {{ splitCandidates.length }} 条内容</div>
+        <div class="split-preview">
+          <div class="split-item" v-for="(item, i) in splitCandidates" :key="i">
+            <span class="split-num">{{ i + 1 }}.</span>
+            {{ item }}
+          </div>
+        </div>
+        <div class="split-actions">
+          <button class="btn-split primary" @click="confirmSplit">分开保存</button>
+          <button class="btn-split" @click="cancelSplit">合并为一条</button>
+          <button class="btn-split dismiss" @click="dismissSplit">取消</button>
+        </div>
+      </div>
+    </transition>
   </div>
 </template>
 
@@ -45,7 +61,7 @@ import { ref, nextTick, watch } from 'vue'
 import VoiceInput from './VoiceInput.vue'
 import { useVoiceInput } from '../composables/useVoiceInput.js'
 
-const emit = defineEmits(['submit', 'voice-submit'])
+const emit = defineEmits(['submit', 'voice-submit', 'submit-multiple'])
 
 const text = ref('')
 const isFocused = ref(false)
@@ -54,9 +70,50 @@ const voice = useVoiceInput()
 const isListening = ref(false)
 const voiceStartTime = ref(0)
 
+const showSplitBanner = ref(false)
+const splitCandidates = ref(null)
+
 watch(() => voice.isListening.value, (val) => {
   isListening.value = val
 })
+
+function detectMultiIdea(input) {
+  const trimmed = input.trim()
+  if (!trimmed) return null
+
+  const lines = trimmed.split(/\n/).map(l => l.trim()).filter(l => l.length > 0)
+  if (lines.length < 2) return null
+
+  let candidates = null
+  let isNumbered = true
+  for (const line of lines) {
+    if (!/^\d+[\.\、\)]\s+/.test(line)) { isNumbered = false; break }
+  }
+  if (isNumbered) {
+    candidates = lines.map(l => l.replace(/^\d+[\.\、\)]\s+/, '').trim())
+  }
+
+  if (!candidates) {
+    let isBulleted = true
+    for (const line of lines) {
+      if (!/^[-*•]\s+/.test(line)) { isBulleted = false; break }
+    }
+    if (isBulleted) {
+      candidates = lines.map(l => l.replace(/^[-*•]\s+/, '').trim())
+    }
+  }
+
+  if (!candidates) {
+    const validLines = lines.filter(l => l.length > 5)
+    if (validLines.length >= 3) {
+      candidates = validLines
+    }
+  }
+
+  if (candidates && candidates.length < 2) return null
+
+  return candidates
+}
 
 function autoResize() {
   nextTick(() => {
@@ -85,9 +142,38 @@ function onVoiceStop() {
 function submit() {
   const t = text.value.trim()
   if (!t) return
+
+  const candidates = detectMultiIdea(t)
+  if (candidates && candidates.length > 1) {
+    splitCandidates.value = candidates
+    showSplitBanner.value = true
+    return
+  }
+
   emit('submit', t)
   text.value = ''
   nextTick(autoResize)
+}
+
+function confirmSplit() {
+  emit('submit-multiple', splitCandidates.value)
+  splitCandidates.value = null
+  showSplitBanner.value = false
+  text.value = ''
+  nextTick(autoResize)
+}
+
+function cancelSplit() {
+  emit('submit', text.value.trim())
+  splitCandidates.value = null
+  showSplitBanner.value = false
+  text.value = ''
+  nextTick(autoResize)
+}
+
+function dismissSplit() {
+  splitCandidates.value = null
+  showSplitBanner.value = false
 }
 
 function onBlur() {
@@ -180,6 +266,69 @@ textarea::placeholder {
   margin-top: 6px;
   flex-shrink: 0;
   animation: pulse 1s infinite;
+}
+
+.split-banner {
+  margin-top: 8px;
+  padding: 14px;
+  background: var(--color-surface);
+  border: 1.5px solid var(--color-accent);
+  border-radius: var(--radius-md);
+}
+
+.split-info {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-accent);
+  margin-bottom: 10px;
+}
+
+.split-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 150px;
+  overflow-y: auto;
+  margin-bottom: 12px;
+}
+
+.split-item {
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  line-height: 1.5;
+  padding: 4px 0;
+}
+
+.split-num {
+  color: var(--color-text-tertiary);
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+.split-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-split {
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  border: 1.5px solid var(--color-border);
+  color: var(--color-text-secondary);
+  transition: all var(--duration-fast);
+}
+
+.btn-split.primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #fff;
+}
+
+.btn-split:active {
+  transform: scale(0.96);
 }
 
 .expand-enter-active,

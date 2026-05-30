@@ -2,6 +2,12 @@
   <div class="history-view">
     <header class="view-header">
       <h1 class="view-title">历史笔记</h1>
+      <router-link to="/trash" class="trash-link">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="18" height="18">
+          <polyline points="3 6 5 6 21 6"/>
+          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+        </svg>
+      </router-link>
     </header>
 
     <div class="content-area" v-if="!loading">
@@ -88,12 +94,31 @@ function formatTime(ts) {
 
 .view-header {
   padding: calc(16px + var(--safe-top)) 20px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .view-title {
   font-size: var(--text-2xl);
   font-weight: 700;
   letter-spacing: -0.02em;
+}
+
+.trash-link {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-tertiary);
+  transition: all var(--duration-fast);
+}
+
+.trash-link:active {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
 }
 
 .content-area {

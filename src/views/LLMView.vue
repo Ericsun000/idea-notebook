@@ -1,0 +1,744 @@
+<template>
+  <div class="llm-view">
+    <header class="view-header">
+      <button class="back-btn" @click="$router.push('/')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="20" height="20">
+          <polyline points="15 18 9 12 15 6"/>
+        </svg>
+      </button>
+      <h1 class="view-title">AI 助手</h1>
+      <span v-if="connected" class="status-badge connected">已连接</span>
+    </header>
+
+    <div class="content-area">
+      <!-- 登录面板 -->
+      <div v-if="!connected" class="login-panel anim-fade-up">
+        <div class="login-hero">
+          <span class="login-icon">🤖</span>
+          <p class="login-desc">连接大模型，解锁智能总结、标签校准、深度讨论功能</p>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">选择模型</label>
+          <select v-model="selectedPreset" class="form-select" @change="onPresetChange">
+            <option v-for="p in presets" :key="p.label" :value="p">{{ p.label }}</option>
+          </select>
+          <p class="form-hint" v-if="selectedPreset.description">{{ selectedPreset.description }}</p>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Base URL</label>
+          <input
+            v-model="baseUrl"
+            type="text"
+            class="form-input"
+            placeholder="https://api.deepseek.com"
+          />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Model ID</label>
+          <input
+            v-model="modelId"
+            type="text"
+            class="form-input"
+            placeholder="deepseek-chat"
+          />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">API Key</label>
+          <div class="input-password">
+            <input
+              v-model="apiKey"
+              :type="showKey ? 'text' : 'password'"
+              class="form-input"
+              placeholder="sk-..."
+            />
+            <button class="toggle-btn" @click="showKey = !showKey">
+              <svg v-if="!showKey" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="16" height="16">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+              <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="16" height="16">
+                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+                <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+                <line x1="1" y1="1" x2="23" y2="23"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <button class="connect-btn" :class="{ loading: connecting }" :disabled="connecting || !canConnect" @click="doConnect">
+          <span v-if="!connecting">🔗 连接</span>
+          <span v-else class="spinner-text">测试连接中...</span>
+        </button>
+        <p v-if="errorMsg" class="error-msg">{{ errorMsg }}</p>
+        <p class="privacy-hint">API Key 仅保存在本设备，不上传任何服务器</p>
+      </div>
+
+      <!-- 功能面板 -->
+      <div v-else class="function-panel anim-fade-up">
+        <div class="model-info">
+          <span class="model-name">{{ config?.model || '未知模型' }}</span>
+          <span class="model-url">{{ config?.baseUrl }}</span>
+        </div>
+
+        <div class="action-card" @click="doSummarize">
+          <div class="action-icon">📋</div>
+          <div class="action-body">
+            <h3 class="action-title">总结</h3>
+            <p class="action-desc">帮我进行今日想法总结</p>
+          </div>
+          <div v-if="summarizing" class="action-spinner"></div>
+          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="16" height="16" class="action-arrow">
+            <polyline points="9 18 15 12 9 6"/>
+          </svg>
+        </div>
+
+        <div class="action-card" @click="doCalibrate">
+          <div class="action-icon">🎯</div>
+          <div class="action-body">
+            <h3 class="action-title">校准</h3>
+            <p class="action-desc">标签、分类等系统识别校准</p>
+          </div>
+          <div v-if="calibrating" class="action-spinner"></div>
+          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="16" height="16" class="action-arrow">
+            <polyline points="9 18 15 12 9 6"/>
+          </svg>
+        </div>
+
+        <div class="action-card" @click="doDiscuss">
+          <div class="action-icon">💬</div>
+          <div class="action-body">
+            <h3 class="action-title">讨论</h3>
+            <p class="action-desc">对每条想法生成 AI 评论</p>
+          </div>
+          <div v-if="discussing" class="action-spinner"></div>
+          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="16" height="16" class="action-arrow">
+            <polyline points="9 18 15 12 9 6"/>
+          </svg>
+        </div>
+
+        <!-- 结果区域 -->
+        <div v-if="result" class="result-card" :class="result.type">
+          <div class="result-header">
+            <h3>{{ result.title }}</h3>
+            <button class="result-close" @click="result = null">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="16" height="16">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          </div>
+          <div class="result-content" v-html="result.content"></div>
+          <div class="result-actions" v-if="result.actions">
+            <button v-for="a in result.actions" :key="a.label" class="btn-result" :class="a.variant" @click="a.handler">{{ a.label }}</button>
+          </div>
+        </div>
+
+        <p v-if="actionError" class="error-msg">{{ actionError }}</p>
+
+        <div class="panel-footer">
+          <button class="btn-secondary" @click="doLogout">登出</button>
+          <button class="btn-secondary" @click="doSwitchModel">切换模型</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted } from 'vue'
+import { getLLMConfig, setLLMConfig, clearLLMConfig, MODEL_PRESETS } from '../settings'
+import { generateSmartSummary, calibrateIdeas, discussIdea, testConnection } from '../llm'
+import { getTodayIdeas, updateIdea } from '../db'
+import { useIdeaStore } from '../store'
+
+const store = useIdeaStore()
+
+const presets = MODEL_PRESETS
+const selectedPreset = ref(presets[0])
+const baseUrl = ref(presets[0].baseUrl)
+const modelId = ref(presets[0].id)
+const apiKey = ref('')
+const showKey = ref(false)
+const connecting = ref(false)
+const errorMsg = ref('')
+const connected = ref(false)
+const config = ref(null)
+
+const summarizing = ref(false)
+const calibrating = ref(false)
+const discussing = ref(false)
+const result = ref(null)
+const actionError = ref('')
+
+const canConnect = computed(() => baseUrl.value && apiKey.value.trim())
+
+onMounted(async () => {
+  const cfg = await getLLMConfig()
+  if (cfg) {
+    config.value = cfg
+    connected.value = true
+  }
+})
+
+function onPresetChange() {
+  baseUrl.value = selectedPreset.value.baseUrl || ''
+  modelId.value = selectedPreset.value.id || ''
+}
+
+async function doConnect() {
+  connecting.value = true
+  errorMsg.value = ''
+  try {
+    const ok = await testConnection(baseUrl.value, apiKey.value.trim())
+    if (!ok) throw new Error('连接失败，请检查 Base URL 和 API Key')
+    const cfg = { baseUrl: baseUrl.value, apiKey: apiKey.value.trim(), model: modelId.value || undefined }
+    await setLLMConfig(cfg)
+    config.value = cfg
+    connected.value = true
+    await store.loadToday()
+  } catch (e) {
+    errorMsg.value = e.message || '连接失败'
+  } finally {
+    connecting.value = false
+  }
+}
+
+async function doSummarize() {
+  summarizing.value = true
+  actionError.value = ''
+  result.value = null
+  try {
+    const ideas = await getTodayIdeas()
+    if (!ideas.length) {
+      result.value = { type: 'info', title: '今天还没有想法', content: '<p>先记录一些想法再回来总结吧</p>' }
+      return
+    }
+    const summary = await generateSmartSummary(ideas)
+    result.value = {
+      type: 'success',
+      title: '今日总结',
+      content: `<p>${summary}</p>`,
+      actions: [
+        { label: '保存为今日笔记', variant: 'primary', handler: () => saveSummary(summary, ideas) }
+      ]
+    }
+  } catch (e) {
+    actionError.value = e.message || '生成失败'
+  } finally {
+    summarizing.value = false
+  }
+}
+
+async function saveSummary(summary, ideas) {
+  const { saveDailyNote } = await import('../db')
+  const categoryStats = {}
+  for (const idea of ideas) {
+    categoryStats[idea.category] = (categoryStats[idea.category] || 0) + 1
+  }
+  await saveDailyNote({
+    date: new Date().toISOString().slice(0, 10),
+    ideas: ideas.map(i => i.id),
+    summary,
+    categoryStats,
+    totalCount: ideas.length,
+    generatedAt: Date.now()
+  })
+  result.value = { type: 'success', title: '已保存', content: '<p>今日笔记已保存，可在历史页面查看</p>' }
+}
+
+async function doCalibrate() {
+  calibrating.value = true
+  actionError.value = ''
+  result.value = null
+  try {
+    const ideas = await getTodayIdeas()
+    if (!ideas.length) {
+      result.value = { type: 'info', title: '今天还没有想法', content: '<p>先记录一些想法再校准</p>' }
+      return
+    }
+    const calibration = await calibrateIdeas(ideas)
+    const total = calibration.corrections.length + calibration.splits.length
+    if (total === 0) {
+      result.value = { type: 'info', title: '校准完成', content: '<p>你的想法分类和标签看起来很准确，无需调整 👍</p>' }
+      return
+    }
+    const items = []
+    for (const c of calibration.corrections) {
+      const idea = ideas.find(i => i.id === c.id)
+      const oldInfo = idea ? `[${idea.category}] ${idea.tags.join(', ')}` : ''
+      const newInfo = `[${c.category}] ${c.tags.join(', ')}`
+      items.push(`<div class="calib-item"><span class="calib-old">${oldInfo}</span> → <span class="calib-new">${newInfo}</span></div>`)
+    }
+    result.value = {
+      type: 'calibration',
+      title: `发现 ${total} 处可优化`,
+      content: items.join(''),
+      actions: [
+        { label: `应用修正 (${calibration.corrections.length})`, variant: 'primary', handler: () => applyCalibration(calibration, ideas) }
+      ]
+    }
+  } catch (e) {
+    actionError.value = e.message || '校准失败'
+  } finally {
+    calibrating.value = false
+  }
+}
+
+async function applyCalibration(calibration, ideas) {
+  for (const c of calibration.corrections) {
+    const idea = ideas.find(i => i.id === c.id)
+    if (idea) {
+      await updateIdea(c.id, { category: c.category, tags: c.tags })
+    }
+  }
+  for (const s of calibration.splits) {
+    const idea = ideas.find(i => i.id === s.id)
+    if (idea && s.parts?.length > 1) {
+      const { addIdea } = await import('../db')
+      for (const part of s.parts) {
+        await addIdea({ content: part, category: idea.category, tags: idea.tags, source: 'text' })
+      }
+    }
+  }
+  await store.loadToday()
+  result.value = { type: 'success', title: '修正已应用', content: `<p>已更新 ${calibration.corrections.length} 条标签和分类</p>` }
+}
+
+async function doDiscuss() {
+  discussing.value = true
+  actionError.value = ''
+  result.value = null
+  try {
+    const ideas = await getTodayIdeas()
+    if (!ideas.length) {
+      result.value = { type: 'info', title: '今天还没有想法', content: '<p>记录一些想法后再来讨论吧</p>' }
+      return
+    }
+    result.value = { type: 'info', title: '正在生成评论...', content: '<p>正在逐条分析你的想法，请稍候...</p>' }
+    let count = 0
+    for (const idea of ideas) {
+      if (idea.discussion) continue
+      const comment = await discussIdea(idea.content, idea.category, idea.tags)
+      if (comment) {
+        await updateIdea(idea.id, { discussion: comment })
+        count++
+      }
+    }
+    await store.loadToday()
+    result.value = {
+      type: 'success',
+      title: '讨论完成',
+      content: `<p>已为 ${count} 条想法生成 AI 评论。返回首页查看每条想法下方的讨论内容。</p>`
+    }
+  } catch (e) {
+    actionError.value = e.message || '讨论生成失败'
+  } finally {
+    discussing.value = false
+  }
+}
+
+async function doLogout() {
+  await clearLLMConfig()
+  connected.value = false
+  config.value = null
+  apiKey.value = ''
+  result.value = null
+  actionError.value = ''
+}
+
+function doSwitchModel() {
+  connected.value = false
+  config.value = null
+  apiKey.value = ''
+  result.value = null
+  actionError.value = ''
+  const cfg = config.value
+  if (cfg) {
+    baseUrl.value = cfg.baseUrl || ''
+    modelId.value = cfg.model || ''
+  }
+}
+</script>
+
+<style scoped>
+.llm-view {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--color-bg);
+}
+
+.view-header {
+  padding: calc(16px + var(--safe-top)) 16px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.back-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  color: var(--color-text);
+  transition: background var(--duration-fast);
+}
+
+.back-btn:active {
+  background: var(--color-surface-hover);
+}
+
+.view-title {
+  font-size: var(--text-xl);
+  font-weight: 700;
+  flex: 1;
+}
+
+.status-badge {
+  font-size: var(--text-xs);
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  font-weight: 600;
+}
+
+.status-badge.connected {
+  background: var(--color-green-soft);
+  color: var(--color-green);
+}
+
+.content-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 16px 24px;
+}
+
+.login-panel {
+  max-width: 420px;
+  margin: 0 auto;
+}
+
+.login-hero {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.login-icon {
+  font-size: 3rem;
+  display: block;
+  margin-bottom: 12px;
+}
+
+.login-desc {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+}
+
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-label {
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 6px;
+}
+
+.form-input,
+.form-select {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  background: var(--color-surface);
+  transition: border-color var(--duration-fast);
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.form-select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238B8680' stroke-width='2' stroke-linecap='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  padding-right: 36px;
+}
+
+.form-input:focus,
+.form-select:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-soft);
+}
+
+.form-input[readonly] {
+  background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
+}
+
+.form-hint {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+  margin-top: 4px;
+}
+
+.input-password {
+  position: relative;
+}
+
+.input-password .form-input {
+  padding-right: 40px;
+}
+
+.toggle-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-text-tertiary);
+  padding: 4px;
+}
+
+.toggle-btn:active {
+  color: var(--color-text);
+}
+
+.connect-btn {
+  width: 100%;
+  padding: 14px;
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  color: #fff;
+  font-size: var(--text-base);
+  font-weight: 600;
+  transition: all var(--duration-fast);
+  margin-top: 8px;
+}
+
+.connect-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.connect-btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.connect-btn.loading {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.error-msg {
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: #FEE2E2;
+  color: #DC2626;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+}
+
+.privacy-hint {
+  margin-top: 12px;
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+  text-align: center;
+  line-height: 1.5;
+}
+
+/* function panel */
+.function-panel {
+  max-width: 420px;
+  margin: 0 auto;
+}
+
+.model-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 20px;
+  padding: 12px 16px;
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+}
+
+.model-name {
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.model-url {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+  word-break: break-all;
+}
+
+.action-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 16px;
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  margin-bottom: 10px;
+  cursor: pointer;
+  transition: transform var(--duration-fast);
+  box-shadow: var(--shadow-sm);
+}
+
+.action-card:active {
+  transform: scale(0.98);
+}
+
+.action-icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+
+.action-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.action-title {
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.action-desc {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  margin-top: 2px;
+}
+
+.action-arrow {
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+}
+
+.action-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* result */
+.result-card {
+  margin-top: 16px;
+  padding: 16px;
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.result-card.calibration {
+  border-left: 3px solid var(--color-accent);
+}
+
+.result-card.success {
+  border-left: 3px solid var(--color-green);
+}
+
+.result-card.info {
+  border-left: 3px solid var(--color-blue);
+}
+
+.result-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.result-header h3 {
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+.result-close {
+  color: var(--color-text-tertiary);
+  padding: 4px;
+}
+
+.result-content {
+  font-size: var(--text-sm);
+  line-height: 1.7;
+  color: var(--color-text);
+}
+
+.result-content :deep(.calib-item) {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.result-content :deep(.calib-old) {
+  color: var(--color-text-tertiary);
+  text-decoration: line-through;
+}
+
+.result-content :deep(.calib-new) {
+  color: var(--color-green);
+  font-weight: 600;
+}
+
+.result-actions {
+  margin-top: 14px;
+  display: flex;
+  gap: 8px;
+}
+
+.btn-result {
+  padding: 8px 18px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  transition: background var(--duration-fast);
+}
+
+.btn-result.primary {
+  background: var(--color-accent);
+  color: #fff;
+}
+
+.btn-result:active {
+  transform: scale(0.96);
+}
+
+.panel-footer {
+  margin-top: 24px;
+  display: flex;
+  gap: 10px;
+}
+
+.btn-secondary {
+  flex: 1;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  border: 1.5px solid var(--color-border);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  text-align: center;
+  transition: all var(--duration-fast);
+}
+
+.btn-secondary:active {
+  background: var(--color-surface-hover);
+  border-color: var(--color-text-tertiary);
+}
+</style>

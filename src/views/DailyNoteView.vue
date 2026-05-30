@@ -40,7 +40,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { getDailyNote, getIdeasByDate, deleteIdea, updateIdea } from '../db.js'
+import { getDailyNote, getIdeasByDate, softDeleteIdea, updateIdea } from '../db.js'
 import IdeaCard from '../components/IdeaCard.vue'
 import DailySummary from '../components/DailySummary.vue'
 import EmptyState from '../components/EmptyState.vue'
@@ -66,7 +66,7 @@ onMounted(async () => {
 })
 
 async function onDelete(id) {
-  await deleteIdea(id)
+  await softDeleteIdea(id)
   noteIdeas.value = noteIdeas.value.filter(i => i.id !== id)
 }
 

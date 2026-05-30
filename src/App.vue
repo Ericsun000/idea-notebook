@@ -43,11 +43,21 @@ const router = useRouter()
 
 const showTabBar = computed(() => {
   const name = router.currentRoute.value.name
-  return name === 'home' || name === 'timeline' || name === 'history'
+  return name === 'home' || name === 'timeline' || name === 'history' || name === 'trash' || name === 'settings'
 })
 
 const transitionName = computed(() => {
   const from = router.currentRoute.value.name
+  const to = router.currentRoute.value.query?._to
+  if (to === 'home' || from === 'llm' || from === 'trash' || from === 'daily') {
+    return 'fade-slide-up'
+  }
+  const tabRoutes = ['home', 'timeline', 'history']
+  const fromIdx = tabRoutes.indexOf(from)
+  if (fromIdx >= 0 && to) {
+    const toIdx = tabRoutes.indexOf(to)
+    if (toIdx >= 0) return toIdx > fromIdx ? 'slide-left' : 'slide-right'
+  }
   return from === 'home' ? 'slide-left' : 'slide-right'
 })
 </script>
@@ -107,7 +117,11 @@ const transitionName = computed(() => {
 .slide-left-enter-active,
 .slide-left-leave-active,
 .slide-right-enter-active,
-.slide-right-leave-active {
+.slide-right-leave-active,
+.fade-slide-up-enter-active,
+.fade-slide-up-leave-active,
+.fade-enter-active,
+.fade-leave-active {
   transition: all var(--duration-normal) var(--ease-out);
 }
 
@@ -121,5 +135,20 @@ const transitionName = computed(() => {
 .slide-right-enter-from {
   opacity: 0;
   transform: translateX(-20px);
+}
+
+.fade-slide-up-enter-from {
+  opacity: 0;
+  transform: translateY(24px);
+}
+
+.fade-slide-up-leave-to {
+  opacity: 0;
+  transform: translateY(-12px);
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 </style>

@@ -1,9 +1,14 @@
 <template>
   <div
     class="idea-card anim-fade-up"
-    :class="`cat-${idea.category}`"
+    :class="[`cat-${idea.category}`, { completed: idea.completed }]"
     @dblclick="openCategoryPicker"
   >
+    <button class="complete-btn" :class="{ checked: idea.completed }" @click.stop="$emit('toggle-completed', idea.id)" :aria-label="idea.completed ? '取消完成' : '标记完成'">
+      <svg v-if="idea.completed" viewBox="0 0 24 24" fill="currentColor" stroke="none" width="16" height="16">
+        <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+      </svg>
+    </button>
     <div class="card-body">
       <p class="card-content">{{ idea.content }}</p>
       <div class="card-meta">
@@ -15,12 +20,19 @@
           </svg>
           {{ idea.voiceDuration }}s
         </span>
-        <span class="meta-dot">·</span>
+        <span class="meta-dot" v-if="idea.source === 'voice'">·</span>
         <button class="meta-cat" @click.stop="openCategoryPicker">{{ idea.category }}</button>
       </div>
       <div class="card-tags" v-if="idea.tags.length">
         <TagBadge v-for="tag in idea.tags" :key="tag" :tag="tag" />
       </div>
+      <div class="card-discussion" v-if="idea.discussion && !discussionCollapsed">
+        <div class="discussion-label">🤖 AI 评论</div>
+        <p class="discussion-text">{{ idea.discussion }}</p>
+      </div>
+      <button class="discussion-toggle" v-if="idea.discussion" @click.stop="discussionCollapsed = !discussionCollapsed">
+        {{ discussionCollapsed ? `🤖 查看 AI 评论` : '收起评论' }}
+      </button>
     </div>
     <button class="card-delete" @click="confirmDelete" aria-label="删除">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" width="14" height="14">
@@ -32,13 +44,16 @@
 </template>
 
 <script setup>
+import { ref } from 'vue'
 import TagBadge from './TagBadge.vue'
 
 const props = defineProps({
   idea: { type: Object, required: true }
 })
 
-const emit = defineEmits(['delete', 'change-category'])
+const emit = defineEmits(['delete', 'change-category', 'toggle-completed'])
+
+const discussionCollapsed = ref(true)
 
 const CATEGORIES = ['工作', '生活', '学习', '创作', '其他']
 
@@ -65,7 +80,7 @@ function confirmDelete() {
 .idea-card {
   background: var(--color-surface);
   border-radius: var(--radius-md);
-  padding: 14px 16px;
+  padding: 14px 14px 14px 18px;
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -92,6 +107,38 @@ function confirmDelete() {
 .idea-card.cat-学习::before { background: var(--color-blue); }
 .idea-card.cat-创作::before { background: var(--color-purple); }
 
+.idea-card.completed {
+  opacity: 0.55;
+}
+
+.idea-card.completed::before {
+  background: var(--color-text-tertiary) !important;
+}
+
+.complete-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 2px;
+  transition: all var(--duration-fast);
+  color: transparent;
+}
+
+.complete-btn.checked {
+  background: var(--color-green);
+  border-color: var(--color-green);
+  color: #fff;
+}
+
+.complete-btn:active {
+  border-color: var(--color-green);
+}
+
 .card-body {
   flex: 1;
   min-width: 0;
@@ -102,6 +149,12 @@ function confirmDelete() {
   line-height: 1.6;
   color: var(--color-text);
   word-break: break-word;
+  transition: text-decoration var(--duration-fast);
+}
+
+.idea-card.completed .card-content {
+  text-decoration: line-through;
+  color: var(--color-text-tertiary);
 }
 
 .card-meta {
@@ -148,6 +201,38 @@ function confirmDelete() {
   gap: 6px;
   margin-top: 8px;
   flex-wrap: wrap;
+}
+
+.card-discussion {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--color-blue-soft);
+  border-radius: var(--radius-sm);
+}
+
+.discussion-label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-blue);
+  margin-bottom: 4px;
+}
+
+.discussion-text {
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--color-text);
+}
+
+.discussion-toggle {
+  margin-top: 6px;
+  font-size: var(--text-xs);
+  color: var(--color-blue);
+  padding: 4px 0;
+  transition: opacity var(--duration-fast);
+}
+
+.discussion-toggle:active {
+  opacity: 0.7;
 }
 
 .card-delete {
