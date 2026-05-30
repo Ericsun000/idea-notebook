@@ -84,8 +84,8 @@ export async function generateSmartSummary(ideas) {
     return { content: generateDailySummary(ideas), usage: null }
   }
 
-  const ideasText = ideas.map((i, idx) =>
-    `${idx + 1}. [${i.category}] ${truncate(i.content)}`
+  const ideasText = ideas.map(i =>
+    `- ${truncate(i.content)}`
   ).join('\n')
 
   const systemPrompt = `你是用户的思维伙伴。根据以下今日记录的想法，写一段 150-300 字的每日回顾。
