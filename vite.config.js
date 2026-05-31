@@ -28,7 +28,7 @@ export default defineConfig({
         description: '随时记录想法，每日整理汇总',
         theme_color: '#2D2A24',
         background_color: '#FAF8F5',
-        display: 'standalone',
+        display: 'fullscreen',
         orientation: 'portrait',
         icons: [
           { src: '/icon-192.svg', sizes: '192x192', type: 'image/svg+xml' },
