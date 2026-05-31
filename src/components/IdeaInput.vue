@@ -1,7 +1,7 @@
 <template>
   <div class="idea-input-wrap">
     <div class="project-select-row" v-if="hasProjects">
-      <button class="project-chip" @click="showProjectPicker = !showProjectPicker">
+      <button class="project-chip" @click="toggleProjectPicker">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="14" height="14">
           <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
         </svg>
@@ -11,7 +11,7 @@
         </svg>
       </button>
       <transition name="fade-slide-up">
-        <div class="project-picker" v-if="showProjectPicker">
+        <div class="project-picker" :class="{ above: pickerAbove }" v-if="showProjectPicker">
           <button
             class="project-option"
             :class="{ selected: activeProjectId === null }"
@@ -105,6 +105,7 @@ const collapsed = ref(true)
 const showSplitBanner = ref(false)
 const splitCandidates = ref(null)
 const showProjectPicker = ref(false)
+const pickerAbove = ref(false)
 
 const projects = computed(() => store.projects)
 const hasProjects = computed(() => projects.value.length > 0)
@@ -211,6 +212,22 @@ function dismissSplit() {
   showSplitBanner.value = false
 }
 
+function toggleProjectPicker() {
+  showProjectPicker.value = !showProjectPicker.value
+  if (showProjectPicker.value) {
+    nextTick(() => {
+      const el = document.querySelector('.project-chip')
+      if (el) {
+        const rect = el.getBoundingClientRect()
+        const spaceBelow = window.innerHeight - rect.bottom
+        pickerAbove.value = spaceBelow < 160
+      }
+    })
+  } else {
+    pickerAbove.value = false
+  }
+}
+
 function selectProject(id) {
   store.setActiveProject(id)
   showProjectPicker.value = false
@@ -266,9 +283,7 @@ function onBlur() {
 
 .project-picker {
   position: absolute;
-  top: 100%;
   left: 0;
-  margin-top: 4px;
   min-width: 160px;
   max-height: 200px;
   overflow-y: auto;
@@ -278,6 +293,16 @@ function onBlur() {
   box-shadow: var(--shadow-lg);
   z-index: 20;
   padding: 4px;
+}
+
+.project-picker:not(.above) {
+  top: 100%;
+  margin-top: 4px;
+}
+
+.project-picker.above {
+  bottom: 100%;
+  margin-bottom: 4px;
 }
 
 .project-option {

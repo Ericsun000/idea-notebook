@@ -196,8 +196,11 @@
             <select v-model="activeProjectForSummary" class="form-select" @click.stop>
               <option v-for="p in projects" :key="p.id" :value="p.id">{{ p.name }}</option>
             </select>
+            <select class="model-selector model-selector-proj" v-model="activeForProjectSummary" @click.stop>
+              <option v-for="cfg in configs" :key="cfg.id" :value="cfg.id">{{ cfg.label || cfg.model || '未命名' }}</option>
+            </select>
             <button class="btn-project-summary" :disabled="projectSummarizing" @click="doProjectSummary">
-              <span v-if="!projectSummarizing">🤖 生成项目总结</span>
+              <span v-if="!projectSummarizing">🤖 生成</span>
               <span v-else class="spinner-text">生成中...</span>
             </button>
           </div>
@@ -233,6 +236,7 @@ const configs = ref([])
 const activeForSummarize = ref('')
 const activeForCalibrate = ref('')
 const activeForDiscuss = ref('')
+const activeForProjectSummary = ref('')
 
 const summarizing = ref(false)
 const calibrating = ref(false)
@@ -269,11 +273,12 @@ async function loadConfigs() {
   activeForSummarize.value = activeIds.summarize || firstId
   activeForCalibrate.value = activeIds.calibrate || firstId
   activeForDiscuss.value = activeIds.discuss || firstId
+  activeForProjectSummary.value = activeIds.projectSummary || firstId
   if (!configs.value.length) showAddForm.value = true
 }
 
 function resolveConfig(action) {
-  const idMap = { summarize: activeForSummarize.value, calibrate: activeForCalibrate.value, discuss: activeForDiscuss.value }
+  const idMap = { summarize: activeForSummarize.value, calibrate: activeForCalibrate.value, discuss: activeForDiscuss.value, projectSummary: activeForProjectSummary.value }
   const id = idMap[action]
   return configs.value.find(c => c.id === id) || configs.value[0] || null
 }
@@ -282,6 +287,7 @@ function resolveConfig(action) {
 watch(activeForSummarize, (val) => { if (val) setActiveLLMId('summarize', val) })
 watch(activeForCalibrate, (val) => { if (val) setActiveLLMId('calibrate', val) })
 watch(activeForDiscuss, (val) => { if (val) setActiveLLMId('discuss', val) })
+watch(activeForProjectSummary, (val) => { if (val) setActiveLLMId('projectSummary', val) })
 
 function onPresetChange() {
   baseUrl.value = selectedPreset.value.baseUrl || ''
@@ -550,7 +556,7 @@ async function doDiscuss(supplement = false) {
 
 async function doProjectSummary() {
   const pid = activeProjectForSummary.value
-  const cfg = configs.value.find(c => c.id === activeForDiscuss.value) || configs.value[0]
+  const cfg = resolveConfig('projectSummary')
   if (!pid) { actionError.value = '请先选择项目'; return }
   if (!cfg) { actionError.value = '请先连接模型'; return }
   projectSummarizing.value = true
@@ -563,10 +569,23 @@ async function doProjectSummary() {
     const { content: summary, usage, fallback } = await generateProjectSummary(project, ideas, cfg)
     const tokenInfo = usage ? ` (消耗 ${usage.total} tokens)` : ''
     const warn = fallback ? '⚠️ AI 模型未返回有效结果。\n' : ''
+
+    // 保存总结到项目
+    if (summary && !fallback) {
+      await store.updateProject(pid, {
+        summary,
+        summaryModel: cfg.model || cfg.label || '',
+        summaryTime: Date.now()
+      })
+    }
+
     result.value = {
       type: fallback ? 'fallback' : 'success',
       title: `${project.name} — 项目总结${fallback ? '（本地生成）' : tokenInfo}`,
-      text: warn + summary
+      text: warn + (fallback ? summary : `${summary}\n\n— ${cfg.model || cfg.label || ''}`),
+      actions: [
+        { label: '查看项目', variant: 'primary', handler: () => window.location.href = '#/project/' + pid }
+      ]
     }
   } catch (e) {
     actionError.value = e.message || '生成失败'
@@ -1086,6 +1105,28 @@ async function doProjectSummary() {
 
 .project-pick-row .form-select {
   flex: 1;
+}
+
+.model-selector-proj {
+  font-size: var(--text-xs);
+  padding: 4px 24px 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%238B8680' stroke-width='2' stroke-linecap='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  flex-shrink: 0;
+  max-width: 100px;
+}
+
+.model-selector-proj:focus {
+  outline: none;
+  border-color: var(--color-accent);
 }
 
 .btn-project-summary {

@@ -67,8 +67,15 @@
           <span class="info-label">状态</span>
           <span class="info-status" :class="project.status">{{ statusLabel(project.status) }}</span>
         </div>
+        <div class="info-row" v-if="project.summary">
+          <span class="info-label">AI 项目总结</span>
+          <p class="info-text summary-text">{{ project.summary }}</p>
+          <span class="summary-meta" v-if="project.summaryModel || project.summaryTime">
+            生成模型: {{ project.summaryModel }} · {{ formatDate(project.summaryTime) }}
+          </span>
+        </div>
         <router-link :to="`/llm?project=${project.id}`" class="ai-summarize-btn">
-          🤖 AI 项目总结
+          🤖 {{ project.summary ? '重新生成总结' : 'AI 项目总结' }}
         </router-link>
       </div>
 
@@ -156,6 +163,12 @@ const filteredIdeas = computed(() => {
 
 function statusLabel(s) {
   return { active: '进行中', completed: '已完成', paused: '暂停' }[s] || s
+}
+
+function formatDate(ts) {
+  if (!ts) return ''
+  const d = new Date(ts)
+  return d.toLocaleDateString('zh-CN') + ' ' + d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
 }
 
 onMounted(async () => {
@@ -320,6 +333,25 @@ function onTagClick(tag) {
 }
 
 .ai-summarize-btn:active { transform: scale(0.98); }
+
+.summary-text {
+  font-size: var(--text-sm);
+  line-height: 1.7;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--color-accent-soft);
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  margin-top: 4px;
+}
+
+.summary-meta {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+  margin-top: 6px;
+}
 
 .edit-card {
   max-width: 420px;

@@ -28,8 +28,8 @@ export default defineConfig({
         description: '随时记录想法，每日整理汇总',
         theme_color: '#2D2A24',
         background_color: '#FAF8F5',
-        display: 'fullscreen',
-        display_override: ['fullscreen', 'standalone', 'minimal-ui'],
+        display: 'standalone',
+        display_override: ['standalone', 'fullscreen', 'minimal-ui'],
         orientation: 'portrait',
         lang: 'zh-CN',
         icons: [
