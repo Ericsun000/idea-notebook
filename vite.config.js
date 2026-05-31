@@ -29,7 +29,9 @@ export default defineConfig({
         theme_color: '#2D2A24',
         background_color: '#FAF8F5',
         display: 'fullscreen',
+        display_override: ['fullscreen', 'standalone', 'minimal-ui'],
         orientation: 'portrait',
+        lang: 'zh-CN',
         icons: [
           { src: '/icon-192.svg', sizes: '192x192', type: 'image/svg+xml' },
           { src: '/icon-512.svg', sizes: '512x512', type: 'image/svg+xml' }
