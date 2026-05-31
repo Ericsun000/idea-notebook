@@ -38,12 +38,12 @@ export const MODEL_PRESETS = [
   },
   {
     id: 'qwen-plus',
-    label: '通义千问',
+    label: '通义千问 Qwen3.6 Plus',
     baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode',
     description: '阿里云，多模态能力强'
   },
   {
-    id: 'moonshot-v1',
+    id: 'kimi-k2.6',
     label: 'Kimi',
     baseUrl: 'https://api.moonshot.cn',
     description: '月之暗面，长文本处理'

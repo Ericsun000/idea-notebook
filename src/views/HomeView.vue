@@ -93,7 +93,6 @@
 
     <IdeaInput
       @submit="onSubmit"
-      @voice-submit="onVoiceSubmit"
       @submit-multiple="onSubmitMultiple"
     />
     <ConfettiEffect :active="milestone.showCelebration.value" :duration="3000" />
@@ -157,10 +156,6 @@ onMounted(async () => {
 async function onSubmit(text) {
   await store.createIdea(text)
   checkMilestone()
-}
-
-async function onVoiceSubmit({ text, duration }) {
-  await store.createVoiceIdea(text, duration)
 }
 
 async function onSubmitMultiple(texts) {

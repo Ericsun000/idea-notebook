@@ -27,11 +27,26 @@
         </div>
       </transition>
     </div>
-    <div class="input-card" :class="{ focused: isFocused, 'has-text': text.length > 0 }">
+
+    <!-- 收缩态：紧凑胶囊条 -->
+    <div
+      v-if="collapsed"
+      class="input-collapsed"
+      @click="expand"
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="18" height="18" class="collapse-icon">
+        <line x1="12" y1="5" x2="12" y2="19"/>
+        <line x1="5" y1="12" x2="19" y2="12"/>
+      </svg>
+      <span class="collapse-placeholder">记录想法...</span>
+    </div>
+
+    <!-- 展开态：完整输入框 -->
+    <div v-else class="input-card" :class="{ focused: isFocused, 'has-text': text.length > 0 }">
       <textarea
         ref="textareaRef"
         v-model="text"
-        :placeholder="isListening ? '正在聆听...' : '一闪而过的想法...'"
+        placeholder="一闪而过的想法..."
         rows="1"
         @focus="isFocused = true"
         @blur="onBlur"
@@ -40,12 +55,7 @@
         @keydown.ctrl.enter.prevent="submit"
       ></textarea>
       <div class="input-actions">
-        <VoiceInput
-          :is-listening="isListening"
-          :is-supported="voice.isSupported.value"
-          @start="onVoiceStart"
-          @stop="onVoiceStop"
-        />
+        <div></div>
         <button
           class="submit-btn"
           :class="{ visible: text.trim().length > 0 }"
@@ -59,12 +69,8 @@
         </button>
       </div>
     </div>
-    <transition name="expand">
-      <div v-if="isListening && voice.transcript.value" class="voice-preview">
-        <span class="voice-dot"></span>
-        {{ voice.transcript.value }}
-      </div>
-    </transition>
+
+    <!-- 多条目分割提示 -->
     <transition name="expand">
       <div v-if="showSplitBanner && splitCandidates" class="split-banner">
         <div class="split-info">检测到 {{ splitCandidates.length }} 条内容</div>
@@ -85,20 +91,16 @@
 </template>
 
 <script setup>
-import { ref, nextTick, watch, computed, onMounted } from 'vue'
-import VoiceInput from './VoiceInput.vue'
-import { useVoiceInput } from '../composables/useVoiceInput.js'
+import { ref, nextTick, computed, onMounted } from 'vue'
 import { useIdeaStore } from '../store.js'
 
-const emit = defineEmits(['submit', 'voice-submit', 'submit-multiple'])
+const emit = defineEmits(['submit', 'submit-multiple'])
 const store = useIdeaStore()
 
 const text = ref('')
 const isFocused = ref(false)
 const textareaRef = ref(null)
-const voice = useVoiceInput()
-const isListening = ref(false)
-const voiceStartTime = ref(0)
+const collapsed = ref(true)
 
 const showSplitBanner = ref(false)
 const splitCandidates = ref(null)
@@ -117,9 +119,12 @@ onMounted(() => {
   if (!store.projects.length) store.loadProjects()
 })
 
-watch(() => voice.isListening.value, (val) => {
-  isListening.value = val
-})
+function expand() {
+  collapsed.value = false
+  nextTick(() => {
+    textareaRef.value?.focus()
+  })
+}
 
 function detectMultiIdea(input) {
   const trimmed = input.trim()
@@ -169,21 +174,6 @@ function autoResize() {
   })
 }
 
-function onVoiceStart() {
-  voiceStartTime.value = Date.now()
-  voice.start()
-}
-
-function onVoiceStop() {
-  const duration = (Date.now() - voiceStartTime.value) / 1000
-  voice.stop()
-  const t = voice.transcript.value.trim()
-  if (t) {
-    emit('voice-submit', { text: t, duration })
-    voice.transcript.value = ''
-  }
-}
-
 function submit() {
   const t = text.value.trim()
   if (!t) return
@@ -227,7 +217,13 @@ function selectProject(id) {
 }
 
 function onBlur() {
-  setTimeout(() => { isFocused.value = false }, 150)
+  setTimeout(() => {
+    isFocused.value = false
+    // 失焦时若无内容则收缩
+    if (!text.value.trim()) {
+      collapsed.value = true
+    }
+  }, 150)
 }
 </script>
 
@@ -305,6 +301,41 @@ function onBlur() {
   font-weight: 600;
 }
 
+/* ---- 收缩态 ---- */
+.input-collapsed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 16px;
+  background: var(--color-surface);
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.input-collapsed:active {
+  border-color: var(--color-accent);
+  background: var(--color-surface-hover);
+}
+
+.collapse-icon {
+  color: var(--color-text-tertiary);
+  flex-shrink: 0;
+  transition: color var(--duration-fast);
+}
+
+.input-collapsed:active .collapse-icon {
+  color: var(--color-accent);
+}
+
+.collapse-placeholder {
+  font-size: var(--text-base);
+  color: var(--color-text-tertiary);
+}
+
+/* ---- 展开态 ---- */
 .input-card {
   background: var(--color-surface);
   border: 1.5px solid var(--color-border);
@@ -346,7 +377,7 @@ textarea::placeholder {
 .input-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
 }
 
 .submit-btn {
@@ -368,29 +399,7 @@ textarea::placeholder {
   background: var(--color-accent-soft);
 }
 
-.voice-preview {
-  margin-top: 8px;
-  padding: 10px 14px;
-  background: var(--color-accent-soft);
-  border-radius: var(--radius-sm);
-  font-size: var(--text-sm);
-  color: var(--color-accent);
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  line-height: 1.5;
-}
-
-.voice-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--color-accent);
-  margin-top: 6px;
-  flex-shrink: 0;
-  animation: pulse 1s infinite;
-}
-
+/* ---- 分割提示 ---- */
 .split-banner {
   margin-top: 8px;
   padding: 14px;

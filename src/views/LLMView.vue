@@ -16,11 +16,25 @@
         <div class="section-label">已连接的模型</div>
         <div class="config-card" v-for="cfg in configs" :key="cfg.id">
           <div class="config-body">
-            <span class="config-model">{{ cfg.label || cfg.model || '未命名' }}</span>
+            <span class="config-model">
+              {{ cfg.label || cfg.model || '未命名' }}
+              <span v-if="cfg.builtin" class="builtin-badge">内置</span>
+            </span>
             <span class="config-url">{{ cfg.baseUrl }}</span>
             <span class="config-extra" v-if="cfg.model && cfg.model !== cfg.label">{{ cfg.model }}</span>
           </div>
-          <button class="config-logout" @click="doLogoutConfig(cfg.id)" title="登出此模型">登出</button>
+          <button
+            v-if="!cfg.builtin"
+            class="config-logout"
+            @click="doLogoutConfig(cfg.id)"
+            title="登出此模型"
+          >登出</button>
+          <button
+            v-else
+            class="config-remove"
+            @click="doRemoveBuiltin(cfg.id)"
+            title="移除此模型"
+          >移除</button>
         </div>
         <button class="add-model-btn" @click="showAddForm = !showAddForm">
           {{ showAddForm ? '收起' : '+ 添加模型' }}
@@ -281,13 +295,28 @@ async function doConnect() {
   try {
     const noV1 = selectedPreset.value.noV1 || false
     const noApiKey = selectedPreset.value.noApiKey || false
-    await testConnection(baseUrl.value, apiKey.value.trim(), noV1, noApiKey)
+
+    // 智能 URL 处理：剥离用户可能粘贴的 API 路径后缀，避免双写
+    let url = baseUrl.value.replace(/\/+$/, '')
+    let effectiveNoV1 = noV1
+
+    // 检测并剥离常见 API 路径后缀
+    if (url.endsWith('/v1/chat/completions')) {
+      url = url.slice(0, -'/chat/completions'.length)
+      effectiveNoV1 = true
+    } else if (url.endsWith('/chat/completions')) {
+      url = url.slice(0, -'/chat/completions'.length)
+    } else if (!noV1 && url.endsWith('/v1')) {
+      effectiveNoV1 = true
+    }
+
+    await testConnection(url, apiKey.value.trim(), effectiveNoV1, noApiKey)
     const label = labelName.value.trim() || selectedPreset.value.label
     const cfg = {
-      baseUrl: baseUrl.value,
+      baseUrl: url,
       apiKey: apiKey.value.trim(),
       model: modelId.value || undefined,
-      noV1,
+      noV1: effectiveNoV1,
       noApiKey,
       label
     }
@@ -303,6 +332,16 @@ async function doConnect() {
   } finally {
     connecting.value = false
   }
+}
+
+async function doRemoveBuiltin(id) {
+  if (!confirm('移除内置 GLM-4.7 后将无法自动恢复，确定移除？')) return
+  await removeLLMConfig(id)
+  const { markBuiltinGLMRemoved } = await import('../builtin-keys.js')
+  await markBuiltinGLMRemoved()
+  await loadConfigs()
+  result.value = null
+  actionError.value = ''
 }
 
 async function doLogoutConfig(id) {
@@ -444,12 +483,30 @@ async function doDiscuss(supplement = false) {
       return
     }
 
-    const targets = supplement ? ideas : ideas.filter(i => !i.discussion || !i.discussion.length)
+    function shouldSkip(idea) {
+      if (idea.completed) return true
+      const disc = idea.discussion || []
+      if (disc.length >= 3) return true
+      const mn = cfg.model || cfg.label || ''
+      if (disc.some(d => d.model === mn)) return true
+      return false
+    }
+
+    const targets = supplement
+      ? ideas.filter(i => !shouldSkip(i))
+      : ideas.filter(i => {
+          if (shouldSkip(i)) return false
+          return !i.discussion || !i.discussion.length
+        })
+
     if (!targets.length) {
+      const msg = supplement
+        ? '所有符合条件的想法都已有评论或已完成'
+        : '每条想法都已有 AI 评论，或已完成/评论过多'
       result.value = {
-        type: 'info', title: '所有想法已有讨论',
-        text: '每条想法都已有 AI 评论。点击"补充讨论"可让当前模型基于已有评论追加新观点。',
-        actions: [{ label: '补充讨论', variant: 'primary', handler: () => doDiscuss(true) }]
+        type: 'info', title: '无需讨论',
+        text: supplement ? msg : `${msg}。点击"补充讨论"可让当前模型基于已有评论追加新观点。`,
+        actions: supplement ? [] : [{ label: '补充讨论', variant: 'primary', handler: () => doDiscuss(true) }]
       }
       return
     }
@@ -464,14 +521,15 @@ async function doDiscuss(supplement = false) {
     }
 
     const newDiscussions = await discussIdeasBatch(targets, prevDiscussions, cfg)
-    let count = 0
-    for (const d of newDiscussions) {
+    // 并行写入 IndexedDB，提升大批量保存性能
+    const updates = newDiscussions.map(async (d) => {
       const idea = ideas.find(i => i.id === d.id)
-      if (!idea) continue
+      if (!idea) return null
       const existing = Array.isArray(idea.discussion) ? idea.discussion : []
-      await updateIdea(d.id, { discussion: [...existing, d] })
-      count++
-    }
+      return updateIdea(d.id, { discussion: [...existing, d] })
+    })
+    const results = await Promise.all(updates)
+    const count = results.filter(Boolean).length
 
     await store.loadToday()
     const modelName = cfg.model || cfg.label || ''
@@ -781,6 +839,39 @@ async function doProjectSummary() {
 
 .config-logout:active {
   background: #FEF2F2;
+}
+
+.config-remove {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: #D97706;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid #FEF3C7;
+  flex-shrink: 0;
+  transition: all var(--duration-fast);
+}
+
+.config-remove:active {
+  background: #FFFBEB;
+}
+
+.builtin-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-green-soft);
+  color: var(--color-green);
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.form-input.readonly {
+  background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
+  cursor: default;
 }
 
 .add-model-btn {

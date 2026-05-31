@@ -54,37 +54,91 @@ async function callLLM(systemPrompt, userMessage, options = {}, llmConfig = null
   if (baseUrl.startsWith('/')) {
     baseUrl = window.location.origin + baseUrl
   }
+  // 自动检测并剥离 API 路径后缀，防止双写 /v1/chat/completions
+  let effectiveNoV1 = noV1
+  if (baseUrl.endsWith('/v1/chat/completions')) {
+    baseUrl = baseUrl.slice(0, -'/chat/completions'.length)
+    effectiveNoV1 = true
+  } else if (baseUrl.endsWith('/chat/completions')) {
+    baseUrl = baseUrl.slice(0, -'/chat/completions'.length)
+  } else if (!effectiveNoV1 && baseUrl.endsWith('/v1')) {
+    effectiveNoV1 = true
+  }
   const urlObj = new URL(baseUrl)
   if (urlObj.protocol !== 'https:' && urlObj.hostname !== 'localhost' && urlObj.hostname !== '127.0.0.1') {
     throw new Error('安全警告：API Key 将通过不安全的 HTTP 传输，请使用 HTTPS 地址')
   }
 
-  const prefix = noV1 ? '' : '/v1'
-  const response = await fetch(`${baseUrl}${prefix}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(noApiKey ? {} : { 'Authorization': `Bearer ${config.apiKey}` })
-    },
-    body: JSON.stringify(body)
-  })
+  const prefix = effectiveNoV1 ? '' : '/v1'
+  const fetchUrl = `${baseUrl}${prefix}/chat/completions`
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(noApiKey ? {} : { 'Authorization': `Bearer ${config.apiKey}` })
+  }
+  const TIMEOUT_MS = 120000  // 120 秒，GLM 等慢模型需要更长时间
 
-  if (!response.ok) {
-    if (response.status === 401) {
-      throw new Error('API Key 无效，请检查配置')
+  // 重试循环：超时和 5xx 服务器错误自动重试（最多 2 次）
+  const MAX_RETRIES = 2
+  let lastError
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      // 指数退避：1s, 2s
+      await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt - 1)))
     }
-    console.error('API error details:', response.status, await response.text())
-    throw new Error(`API 请求失败 (${response.status})`)
+
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS)
+
+    try {
+      const response = await fetch(fetchUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        signal: controller.signal
+      })
+      clearTimeout(timeoutId)
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error('API Key 无效，请检查配置')
+        }
+        const errText = await response.text().catch(() => '')
+        console.error('API error details:', response.status, errText)
+        throw new Error(`API 请求失败 (${response.status})`)
+      }
+
+      const data = await response.json()
+      const choice = data.choices?.[0]?.message || {}
+      const content = choice.content || choice.reasoning_content || null
+      const usage = data.usage || null
+
+      if (!content) {
+        console.warn('LLM returned empty/null content.',
+          'Model:', config.model,
+          'Response keys:', Object.keys(choice),
+          'Full choice:', JSON.stringify(choice).slice(0, 300))
+      }
+
+      return { content, usage }
+    } catch (e) {
+      clearTimeout(timeoutId)
+      lastError = e
+
+      // 仅对超时和服务器错误进行重试
+      const isTimeout = e.name === 'AbortError'
+      const isServerError = e.message && /API 请求失败 \(5\d{2}\)/.test(e.message)
+      const isNetworkError = e.message && e.message.includes('Failed to fetch')
+      const shouldRetry = isTimeout || isServerError || isNetworkError
+
+      if (!shouldRetry || attempt >= MAX_RETRIES) break
+
+      const reason = isTimeout ? '超时' : isServerError ? '服务器错误' : '网络错误'
+      console.warn(`LLM 请求${reason}，${1000 * Math.pow(2, attempt - 1) / 1000}s 后重试 (${attempt + 1}/${MAX_RETRIES})`,
+        'Model:', config.model)
+    }
   }
 
-  const data = await response.json()
-  const choice = data.choices?.[0]?.message || {}
-  const content = choice.content || choice.reasoning_content || null
-  const usage = data.usage || null
-  if (!content) {
-    console.warn('LLM returned empty/null content. Full response:', data)
-  }
-  return { content, usage }
+  throw lastError
 }
 
 function parseJSONResponse(text) {
@@ -144,12 +198,9 @@ export async function generateSmartSummary(ideas, llmConfig = null) {
   }
 }
 
-export async function calibrateIdeas(ideas, llmConfig = null) {
-  if (!Array.isArray(ideas)) return { corrections: [], splits: [], usage: null, fallback: true }
-  if (!llmConfig && !(await isLLMConfigured())) {
-    return { corrections: [], splits: [], usage: null, fallback: true }
-  }
+const CALIBRATE_BATCH_SIZE = 15
 
+async function calibrateOneBatch(ideas, llmConfig) {
   const ideasJSON = ideas.map(i => ({
     id: i.id,
     content: truncate(i.content),
@@ -184,12 +235,56 @@ export async function calibrateIdeas(ideas, llmConfig = null) {
   }
 }
 
+export async function calibrateIdeas(ideas, llmConfig = null) {
+  if (!Array.isArray(ideas)) return { corrections: [], splits: [], usage: null, fallback: true }
+  if (!llmConfig && !(await isLLMConfigured())) {
+    return { corrections: [], splits: [], usage: null, fallback: true }
+  }
+
+  // 分批处理，避免单次请求过大导致超时或失败
+  const batches = []
+  for (let i = 0; i < ideas.length; i += CALIBRATE_BATCH_SIZE) {
+    batches.push(ideas.slice(i, i + CALIBRATE_BATCH_SIZE))
+  }
+
+  let allCorrections = []
+  let allSplits = []
+  let totalUsage = null
+  let anySuccess = false
+
+  for (const batch of batches) {
+    const result = await calibrateOneBatch(batch, llmConfig)
+    allCorrections.push(...result.corrections)
+    allSplits.push(...result.splits)
+    if (result.usage) {
+      if (!totalUsage) totalUsage = { prompt: 0, completion: 0, total: 0 }
+      totalUsage.prompt += result.usage.prompt
+      totalUsage.completion += result.usage.completion
+      totalUsage.total += result.usage.total
+    }
+    if (!result.fallback) anySuccess = true
+  }
+
+  return { corrections: allCorrections, splits: allSplits, usage: totalUsage, fallback: !anySuccess && ideas.length > 0 }
+}
+
 export async function discussIdeasBatch(ideas, previousDiscussions = {}, llmConfig = null) {
   if (!Array.isArray(ideas)) return []
   if (!llmConfig && !(await isLLMConfigured())) return []
 
   const config = llmConfig || await getLLMConfig()
   const modelName = config?.model || 'unknown'
+
+  // 过滤：跳过已完成、评论≥3条、同模型已评论的想法
+  const eligible = ideas.filter(i => {
+    if (i.completed) return false
+    const discCount = (i.discussion?.length || 0)
+    if (discCount >= 3) return false
+    if (i.discussion?.some(d => d.model === modelName)) return false
+    return true
+  })
+  if (!eligible.length) return []
+  ideas = eligible
 
   // Pre-fetch project context for ideas that belong to a project
   const projectIds = [...new Set(ideas.filter(i => i.projectId).map(i => i.projectId))]
@@ -305,22 +400,42 @@ export async function generateProjectSummary(project, ideas, llmConfig = null) {
 export async function testConnection(baseUrl, apiKey, noV1 = false, noApiKey = false) {
   const url = baseUrl.replace(/\/+$/, '')
   const prefix = noV1 ? '' : '/v1'
-  const modelsUrl = noV1 ? `${url}/models` : `${url}${prefix}/models`
-  const headers = noApiKey ? {} : { 'Authorization': `Bearer ${apiKey}` }
+  const testUrl = `${url}${prefix}/chat/completions`
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(noApiKey ? {} : { 'Authorization': `Bearer ${apiKey}` })
+  }
+  // 发送最小化请求测试连通性（不实际消耗 token）
+  const body = JSON.stringify({
+    model: 'test',
+    messages: [{ role: 'user', content: 'hi' }],
+    max_tokens: 1
+  })
 
   try {
-    const response = await fetch(modelsUrl, { method: 'GET', headers })
-    if (!response.ok) {
-      throw new Error(`服务器返回 ${response.status}，请检查 URL 和端口是否正确`)
+    const response = await fetch(testUrl, { method: 'POST', headers, body })
+    // 200 = 完全成功；401/403 = API Key 有效但 model 名不对，也说明连接成功
+    if (response.ok || response.status === 401 || response.status === 403) {
+      return true
     }
-    return true
+    const text = await response.text().catch(() => '')
+    throw new Error(`服务器返回 ${response.status}${text ? '：' + text.slice(0, 100) : ''}，请检查 URL 和端口是否正确`)
   } catch (e) {
     if (e.message.includes('Failed to fetch') || e.name === 'TypeError') {
       const isLocal = url.includes('localhost') || url.includes('127.0.0.1')
       if (isLocal) {
         throw new Error(`无法连接到 ${url}\n请确认：\n1. LM Studio / Ollama 已启动\n2. 端口号正确\n3. Server 开关已打开`)
       }
-      throw new Error(`无法连接到 ${url}\n请检查网络连接和 Base URL`)
+      throw new Error(
+        `无法连接到 ${url}\n\n` +
+        `可能原因：\n` +
+        `1. 该 API 服务不支持浏览器直接调用（CORS 限制）\n` +
+        `2. 网络无法访问该地址\n` +
+        `3. Base URL 配置不正确\n\n` +
+        `测试地址：${testUrl}\n` +
+        `提示：如果网络正常但仍无法连接，通常是该 API 不支持浏览器端调用。` +
+        `DeepSeek、GLM、Qwen、Kimi 等已确认支持浏览器直接访问。`
+      )
     }
     throw e
   }
