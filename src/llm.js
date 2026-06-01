@@ -273,7 +273,7 @@ export async function discussIdeasBatch(ideas, previousDiscussions = {}, llmConf
   if (!llmConfig && !(await isLLMConfigured())) return []
 
   const config = llmConfig || await getLLMConfig()
-  const modelName = config?.model || 'unknown'
+  const modelName = config?.model || config?.label || 'unknown'
 
   // 过滤：跳过已完成、评论≥3条、同模型已评论的想法
   const eligible = ideas.filter(i => {
@@ -353,6 +353,92 @@ ${previousDiscussions && Object.values(previousDiscussions).some(a => Array.isAr
   }
 }
 
+export async function debateIdeasBatch(ideas, previousDebates = {}, llmConfig = null) {
+  if (!Array.isArray(ideas)) return []
+  if (!llmConfig && !(await isLLMConfigured())) return []
+
+  const config = llmConfig || await getLLMConfig()
+  const modelName = config?.model || config?.label || 'unknown'
+
+  // 过滤：跳过已完成、辩驳≥3条、同模型已辩驳的想法
+  const eligible = ideas.filter(i => {
+    if (i.completed) return false
+    const debateCount = (i.debate?.length || 0)
+    if (debateCount >= 3) return false
+    if (i.debate?.some(d => d.model === modelName)) return false
+    return true
+  })
+  if (!eligible.length) return []
+  ideas = eligible
+
+  // Pre-fetch project context for ideas that belong to a project
+  const projectIds = [...new Set(ideas.filter(i => i.projectId).map(i => i.projectId))]
+  const projectMap = {}
+  for (const pid of projectIds) {
+    const p = await getProject(pid)
+    if (p) projectMap[pid] = p
+  }
+  const hasProjectContext = Object.keys(projectMap).length > 0
+
+  const ideasJSON = (Array.isArray(ideas) ? ideas : []).map(i => {
+    const raw = previousDebates[i.id]
+    const prev = Array.isArray(raw) ? raw : []
+    const prevContext = prev.length > 0
+      ? `\n已有辩驳：${prev.map(d => `[${d.model}] ${d.content}`).join(' | ')}`
+      : ''
+    const proj = projectMap[i.projectId]
+    const projContext = proj
+      ? `\n所属项目：${proj.name}${proj.description ? `（${proj.description}）` : ''}${proj.context ? `\n项目上下文：${proj.context}` : ''}`
+      : ''
+    return {
+      id: i.id,
+      content: truncate(i.content) + projContext,
+      category: i.category,
+      tags: i.tags,
+      hasPrevious: prev.length > 0
+    }
+  })
+
+  const projectContextBlock = hasProjectContext
+    ? `部分想法属于某个项目，系统已附上项目背景信息。请结合项目上下文给出更有针对性的辩驳。\n`
+    : ''
+
+  const systemPrompt = `你是用户的蓝方辩手（反方）。你的职责是**只提出反对意见**——挑战用户的想法，指出潜在问题、盲点、风险和逻辑漏洞。用中文。
+
+${projectContextBlock}
+每条辩驳应该：
+- 针对想法**具体内容**提出质疑和挑战
+- 指出可能被忽略的风险、代价或矛盾
+- 从不同角度反驳，激发用户更深入的思考
+- 语气理性克制，不要人身攻击，像一位严谨的对手
+
+**示例辩驳**（假如想法是"周末想去露营放松一下"）：
+"放松的前提是安全。这个季节蛇虫活跃，你对那片区域了解多少？手机信号覆盖如何？如果遇到突发天气变化，你的装备能扛住吗？另外，一个人的话，紧急联系人安排好了吗？露营不是搭个帐篷那么简单，建议先把安全预案做足。"
+
+${previousDebates && Object.values(previousDebates).some(a => Array.isArray(a) && a.length) ? '部分想法已有其他模型的辩驳，你可以从新角度补充质疑，但**不要复述已有观点**。' : ''}
+**严格禁止**：禁止同意或附和用户的想法。你的职责是质疑，不是支持。每条辩驳必须包含具体的质疑点或风险提示。
+
+返回纯 JSON，不要 markdown 标记：
+{"debates":[{"id":"想法ID","content":"辩驳内容"}]}`
+
+  try {
+    const { content } = await callLLM(systemPrompt, JSON.stringify(ideasJSON),
+      { temperature: 0.7, maxTokens: 2048 }, llmConfig)
+    const parsed = parseJSONResponse(content)
+    if (parsed?.debates && Array.isArray(parsed.debates)) {
+      return parsed.debates.map(d => ({
+        id: d.id,
+        model: modelName,
+        content: d.content,
+        timestamp: Date.now()
+      }))
+    }
+    return []
+  } catch {
+    return []
+  }
+}
+
 export async function generateProjectSummary(project, ideas, llmConfig = null) {
   if (!project) return { content: '', usage: null, fallback: true }
   if (!Array.isArray(ideas) || !ideas.length) {
@@ -400,21 +486,15 @@ export async function generateProjectSummary(project, ideas, llmConfig = null) {
 export async function testConnection(baseUrl, apiKey, noV1 = false, noApiKey = false) {
   const url = baseUrl.replace(/\/+$/, '')
   const prefix = noV1 ? '' : '/v1'
-  const testUrl = `${url}${prefix}/chat/completions`
+  const testUrl = `${url}${prefix}/models`
   const headers = {
     'Content-Type': 'application/json',
     ...(noApiKey ? {} : { 'Authorization': `Bearer ${apiKey}` })
   }
-  // 发送最小化请求测试连通性（不实际消耗 token）
-  const body = JSON.stringify({
-    model: 'test',
-    messages: [{ role: 'user', content: 'hi' }],
-    max_tokens: 1
-  })
 
   try {
-    const response = await fetch(testUrl, { method: 'POST', headers, body })
-    // 200 = 完全成功；401/403 = API Key 有效但 model 名不对，也说明连接成功
+    const response = await fetch(testUrl, { method: 'GET', headers })
+    // 200 = 连接成功；401/403 = 端点可达但 API Key 无效，也说明连接成功
     if (response.ok || response.status === 401 || response.status === 403) {
       return true
     }

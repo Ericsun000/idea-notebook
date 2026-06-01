@@ -43,6 +43,17 @@
           </div>
         </div>
       </div>
+      <div class="card-debates" v-if="idea.debate && idea.debate.length">
+        <button class="debate-toggle" @click.stop="showDebate = !showDebate">
+          ⚔️ {{ showDebate ? '收起' : '查看' }} 蓝方辩驳 ({{ idea.debate.length }})
+        </button>
+        <div class="debate-list" v-if="showDebate">
+          <div class="debate-bubble" v-for="(d, di) in idea.debate" :key="di">
+            <div class="debate-label">{{ d.model }}</div>
+            <p class="debate-text">{{ d.content }}</p>
+          </div>
+        </div>
+      </div>
     </div>
     <button class="card-delete" @click="confirmDelete" aria-label="删除">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" width="14" height="14">
@@ -73,6 +84,7 @@ const projectName = computed(() => {
 })
 
 const showDiscussion = ref(false)
+const showDebate = ref(false)
 
 const CATEGORIES = ['工作', '生活', '学习', '创作', '其他']
 
@@ -276,6 +288,44 @@ function confirmDelete() {
 }
 
 .discussion-text {
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  color: var(--color-text);
+}
+
+.debate-toggle {
+  font-size: var(--text-xs);
+  color: var(--color-red);
+  padding: 4px 0;
+  transition: opacity var(--duration-fast);
+}
+
+.debate-toggle:active {
+  opacity: 0.7;
+}
+
+.debate-list {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.debate-bubble {
+  padding: 10px 12px;
+  background: var(--color-red-soft);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--color-red);
+}
+
+.debate-label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-red);
+  margin-bottom: 3px;
+}
+
+.debate-text {
   font-size: var(--text-sm);
   line-height: 1.6;
   color: var(--color-text);

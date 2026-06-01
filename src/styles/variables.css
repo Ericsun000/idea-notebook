@@ -11,6 +11,8 @@
   --color-green-soft: #EDF5EB;
   --color-blue: #7B9EC7;
   --color-blue-soft: #EBF2FA;
+  --color-red: #D4786E;
+  --color-red-soft: #FDF0ED;
   --color-purple: #A089C0;
   --color-purple-soft: #F2EDF8;
   --color-border: #E8E4DF;
@@ -51,6 +53,8 @@
     --color-green-soft: #253A21;
     --color-blue: #93B4DA;
     --color-blue-soft: #1E2E3D;
+    --color-red: #E09088;
+    --color-red-soft: #3D2522;
     --color-purple: #B9A2D8;
     --color-purple-soft: #2E2540;
     --color-border: #363330;

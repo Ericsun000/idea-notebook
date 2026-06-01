@@ -168,6 +168,21 @@
           </svg>
         </div>
 
+        <div class="action-card" @click="doDebate">
+          <div class="action-icon">⚔️</div>
+          <div class="action-body">
+            <h3 class="action-title">辩论</h3>
+            <p class="action-desc">蓝方视角，挑战你的想法</p>
+          </div>
+          <select class="model-selector" v-model="activeForDebate" @click.stop>
+            <option v-for="cfg in configs" :key="cfg.id" :value="cfg.id">{{ cfg.label || cfg.model || '未命名' }}</option>
+          </select>
+          <div v-if="debating" class="action-spinner"></div>
+          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="16" height="16" class="action-arrow">
+            <polyline points="9 18 15 12 9 6"/>
+          </svg>
+        </div>
+
         <!-- 结果区域 -->
         <div v-if="result" class="result-card" :class="result.type">
           <div class="result-header">
@@ -214,7 +229,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { getLLMConfigs, saveLLMConfig, removeLLMConfig, getActiveLLMIds, setActiveLLMId, MODEL_PRESETS } from '../settings'
-import { generateSmartSummary, calibrateIdeas, discussIdeasBatch, generateProjectSummary, testConnection } from '../llm'
+import { generateSmartSummary, calibrateIdeas, discussIdeasBatch, debateIdeasBatch, generateProjectSummary, testConnection } from '../llm'
 import { getTodayIdeas, getTodayNote, updateIdea, getIdeasByProject } from '../db'
 import { useIdeaStore } from '../store'
 
@@ -236,11 +251,13 @@ const configs = ref([])
 const activeForSummarize = ref('')
 const activeForCalibrate = ref('')
 const activeForDiscuss = ref('')
+const activeForDebate = ref('')
 const activeForProjectSummary = ref('')
 
 const summarizing = ref(false)
 const calibrating = ref(false)
 const discussing = ref(false)
+const debating = ref(false)
 const projectSummarizing = ref(false)
 const result = ref(null)
 const actionError = ref('')
@@ -273,12 +290,13 @@ async function loadConfigs() {
   activeForSummarize.value = activeIds.summarize || firstId
   activeForCalibrate.value = activeIds.calibrate || firstId
   activeForDiscuss.value = activeIds.discuss || firstId
+  activeForDebate.value = activeIds.debate || firstId
   activeForProjectSummary.value = activeIds.projectSummary || firstId
   if (!configs.value.length) showAddForm.value = true
 }
 
 function resolveConfig(action) {
-  const idMap = { summarize: activeForSummarize.value, calibrate: activeForCalibrate.value, discuss: activeForDiscuss.value, projectSummary: activeForProjectSummary.value }
+  const idMap = { summarize: activeForSummarize.value, calibrate: activeForCalibrate.value, discuss: activeForDiscuss.value, debate: activeForDebate.value, projectSummary: activeForProjectSummary.value }
   const id = idMap[action]
   return configs.value.find(c => c.id === id) || configs.value[0] || null
 }
@@ -287,6 +305,7 @@ function resolveConfig(action) {
 watch(activeForSummarize, (val) => { if (val) setActiveLLMId('summarize', val) })
 watch(activeForCalibrate, (val) => { if (val) setActiveLLMId('calibrate', val) })
 watch(activeForDiscuss, (val) => { if (val) setActiveLLMId('discuss', val) })
+watch(activeForDebate, (val) => { if (val) setActiveLLMId('debate', val) })
 watch(activeForProjectSummary, (val) => { if (val) setActiveLLMId('projectSummary', val) })
 
 function onPresetChange() {
@@ -551,6 +570,84 @@ async function doDiscuss(supplement = false) {
     actionError.value = e.message || '讨论生成失败'
   } finally {
     discussing.value = false
+  }
+}
+
+async function doDebate(supplement = false) {
+  const cfg = resolveConfig('debate')
+  if (!cfg) { actionError.value = '请先连接模型'; return }
+  debating.value = true
+  actionError.value = ''
+  result.value = null
+  try {
+    const ideas = await getTodayIdeas()
+    if (!ideas.length) {
+      result.value = { type: 'info', title: '今天还没有想法', text: '记录一些想法后再来辩论吧' }
+      return
+    }
+
+    function shouldSkip(idea) {
+      if (idea.completed) return true
+      const deb = idea.debate || []
+      if (deb.length >= 3) return true
+      const mn = cfg.model || cfg.label || ''
+      if (deb.some(d => d.model === mn)) return true
+      return false
+    }
+
+    const targets = supplement
+      ? ideas.filter(i => !shouldSkip(i))
+      : ideas.filter(i => {
+          if (shouldSkip(i)) return false
+          return !i.debate || !i.debate.length
+        })
+
+    if (!targets.length) {
+      const msg = supplement
+        ? '所有符合条件的想法都已有辩驳或已完成'
+        : '每条想法都已有蓝方辩驳，或已完成/辩驳过多'
+      result.value = {
+        type: 'info', title: '无需辩论',
+        text: supplement ? msg : `${msg}。点击"补充辩论"可让当前模型基于已有辩驳追加新观点。`,
+        actions: supplement ? [] : [{ label: '补充辩论', variant: 'primary', handler: () => doDebate(true) }]
+      }
+      return
+    }
+
+    result.value = { type: 'info', title: '正在生成辩驳...', text: `正在分析 ${targets.length} 条想法，请稍候...` }
+
+    const prevDebates = {}
+    for (const idea of targets) {
+      if (Array.isArray(idea.debate) && idea.debate.length) {
+        prevDebates[idea.id] = idea.debate
+      }
+    }
+
+    const newDebates = await debateIdeasBatch(targets, prevDebates, cfg)
+    // 并行写入 IndexedDB，提升大批量保存性能
+    const updates = newDebates.map(async (d) => {
+      const idea = ideas.find(i => i.id === d.id)
+      if (!idea) return null
+      const existing = Array.isArray(idea.debate) ? idea.debate : []
+      return updateIdea(d.id, { debate: [...existing, d] })
+    })
+    const results = await Promise.all(updates)
+    const count = results.filter(Boolean).length
+
+    await store.loadToday()
+    const modelName = cfg.model || cfg.label || ''
+    const tokenInfo = newDebates.length ? ` · 模型: ${modelName}` : ''
+    const suffix = supplement && count > 0 ? `（${modelName} 补充）` : ''
+    result.value = {
+      type: 'success',
+      title: `辩论完成${suffix}`,
+      text: `已为 ${count} 条想法生成蓝方辩驳${tokenInfo}。返回首页查看每条想法下方的辩论内容。`,
+      actions: supplement ? [] : [{ label: '补充辩论', variant: 'primary', handler: () => doDebate(true) }]
+    }
+  } catch (e) {
+    actionError.value = e.message || '辩论生成失败'
+  } finally {
+    debating.value = false
   }
 }
 
