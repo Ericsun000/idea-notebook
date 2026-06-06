@@ -7,6 +7,12 @@
         </transition>
       </router-view>
     </main>
+    <Transition name="toast-slide">
+      <div v-if="toastVisible" class="bg-toast" :class="{ done: toastDone }">
+        <span class="toast-icon">{{ toastDone ? '✓' : '🤖' }}</span>
+        <span class="toast-text">{{ toastMessage }}</span>
+      </div>
+    </Transition>
     <nav class="tab-bar" v-if="showTabBar">
       <router-link to="/" class="tab-item" exact-active-class="tab-active">
         <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
@@ -42,10 +48,12 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useBackgroundTasks } from './composables/useBackgroundTasks'
 
 const router = useRouter()
+const { anyRunning, tasks } = useBackgroundTasks()
 
 const showTabBar = computed(() => {
   const name = router.currentRoute.value.name
@@ -65,6 +73,36 @@ const transitionName = computed(() => {
     if (toIdx >= 0) return toIdx > fromIdx ? 'slide-left' : 'slide-right'
   }
   return from === 'home' ? 'slide-left' : 'slide-right'
+})
+
+// --- Background task toast ---
+const toastVisible = ref(false)
+const toastDone = ref(false)
+const toastMessage = ref('')
+let _toastTimer = null
+
+// Build label from running tasks
+const runningLabel = computed(() => {
+  const parts = []
+  if (tasks.discuss.running) parts.push(`讨论 (${tasks.discuss.configLabel})`)
+  if (tasks.debate.running) parts.push(`辩论 (${tasks.debate.configLabel})`)
+  return parts.join('、')
+})
+
+watch(anyRunning, (val) => {
+  clearTimeout(_toastTimer)
+  if (val) {
+    toastVisible.value = true
+    toastDone.value = false
+    toastMessage.value = `AI ${runningLabel.value}运行中...`
+  } else {
+    // All tasks finished — show done briefly then dismiss
+    toastDone.value = true
+    toastMessage.value = 'AI 任务已完成'
+    _toastTimer = setTimeout(() => {
+      toastVisible.value = false
+    }, 3000)
+  }
 })
 </script>
 
@@ -156,5 +194,44 @@ const transitionName = computed(() => {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+/* --- Background task toast --- */
+.bg-toast {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: var(--color-accent-soft);
+  margin: 0 auto;
+  font-size: var(--text-xs);
+  color: var(--color-accent);
+  z-index: 101;
+}
+
+.bg-toast.done {
+  background: var(--color-green-soft);
+  color: var(--color-green);
+}
+
+.toast-icon {
+  font-size: 13px;
+}
+
+.toast-text {
+  font-weight: 500;
+}
+
+.toast-slide-enter-active,
+.toast-slide-leave-active {
+  transition: all var(--duration-normal) var(--ease-out);
+}
+
+.toast-slide-enter-from,
+.toast-slide-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
 }
 </style>

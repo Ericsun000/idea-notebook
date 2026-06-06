@@ -121,6 +121,12 @@ export async function getTodayIdeas() {
   return getIdeasByDate(todayStr())
 }
 
+export async function getIdeasByDateRange(startDate, endDate) {
+  const db = await getDB()
+  const all = await db.getAllFromIndex('ideas', 'date', IDBKeyRange.bound(startDate, endDate))
+  return all.filter(i => !i.deleted).sort((a, b) => b.timestamp - a.timestamp)
+}
+
 export async function getAllIdeas() {
   const db = await getDB()
   const all = await db.getAll('ideas')

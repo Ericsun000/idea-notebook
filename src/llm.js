@@ -198,6 +198,53 @@ export async function generateSmartSummary(ideas, llmConfig = null) {
   }
 }
 
+export async function generatePeriodSummary(ideas, periodLabel, llmConfig = null) {
+  if (!Array.isArray(ideas) || !ideas.length) {
+    return { content: `${periodLabel}暂无想法记录。`, usage: null, fallback: true }
+  }
+  if (!llmConfig && !(await isLLMConfigured())) {
+    return { content: '', usage: null, fallback: true }
+  }
+
+  // Group ideas by date for richer context
+  const dateGroups = {}
+  for (const idea of ideas) {
+    if (!dateGroups[idea.date]) dateGroups[idea.date] = []
+    dateGroups[idea.date].push(idea)
+  }
+  const sortedDates = Object.keys(dateGroups).sort()
+
+  const periodText = sortedDates.map(date => {
+    const dayIdeas = dateGroups[date]
+    return `--- ${date}（${dayIdeas.length}条）---\n` +
+      dayIdeas.map(i => `- ${truncate(i.content)}`).join('\n')
+  }).join('\n\n')
+
+  const systemPrompt = `你是用户的思维伙伴。根据以下${periodLabel}记录的所有想法，写一段 250-500 字的周期回顾。
+
+回顾需要：
+- 梳理${periodLabel}的思维主题演变：想法之间有什么关联？有什么反复出现的主题？
+- 有没有值得注意的趋势或变化？比如关注点从某个领域向另个领域的转移
+- 找出 1-3 个最值得深入的想法或洞察
+- 给一条温和的、有共鸣的回应或建议
+
+格式：自然段落式的回顾文字，不要 markdown 标记。
+
+严格禁止：
+- 禁止写"工作类X条、生活类Y条"这种分类计数
+- 禁止逐条罗列或编号复述每条想法
+- 禁止只复读分类标签而不做内容整合`
+
+  try {
+    const { content, usage } = await callLLM(systemPrompt, periodText, { maxTokens: 2048 }, llmConfig)
+    const cleaned = cleanReasoningText(content)
+    const fallback = !cleaned
+    return { content: cleaned || '', usage: formatUsage(usage), fallback }
+  } catch {
+    return { content: '', usage: null, fallback: true }
+  }
+}
+
 const CALIBRATE_BATCH_SIZE = 15
 
 async function calibrateOneBatch(ideas, llmConfig) {

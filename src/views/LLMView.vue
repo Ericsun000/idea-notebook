@@ -123,19 +123,26 @@
 
       <!-- 功能面板（有已连接模型时显示） -->
       <div v-if="configs.length" class="function-panel anim-fade-up">
-        <div class="action-card" @click="doSummarize">
-          <div class="action-icon">📋</div>
-          <div class="action-body">
-            <h3 class="action-title">总结</h3>
-            <p class="action-desc">帮我进行今日想法总结</p>
+        <div class="action-card summarize-card">
+          <div class="summarize-row-top">
+            <div class="action-icon">📋</div>
+            <div class="action-body">
+              <h3 class="action-title">总结</h3>
+              <p class="action-desc">{{ summaryScopeLabel }}</p>
+            </div>
+            <select class="model-selector" v-model="activeForSummarize" @click.stop>
+              <option v-for="cfg in configs" :key="cfg.id" :value="cfg.id">{{ cfg.label || cfg.model || '未命名' }}</option>
+            </select>
+            <button class="btn-summarize" :disabled="summarizing" @click.stop="doSummarize">
+              <span v-if="!summarizing">生成</span>
+              <div v-else class="action-spinner"></div>
+            </button>
           </div>
-          <select class="model-selector" v-model="activeForSummarize" @click.stop>
-            <option v-for="cfg in configs" :key="cfg.id" :value="cfg.id">{{ cfg.label || cfg.model || '未命名' }}</option>
-          </select>
-          <div v-if="summarizing" class="action-spinner"></div>
-          <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="16" height="16" class="action-arrow">
-            <polyline points="9 18 15 12 9 6"/>
-          </svg>
+          <div class="scope-pills" @click.stop>
+            <button class="scope-pill" :class="{ active: summaryScope === 'today' }" @click="summaryScope = 'today'">今日</button>
+            <button class="scope-pill" :class="{ active: summaryScope === 'week' }" @click="summaryScope = 'week'">本周</button>
+            <button class="scope-pill" :class="{ active: summaryScope === 'month' }" @click="summaryScope = 'month'">本月</button>
+          </div>
         </div>
 
         <div class="action-card" @click="doCalibrate">
@@ -162,7 +169,8 @@
           <select class="model-selector" v-model="activeForDiscuss" @click.stop>
             <option v-for="cfg in configs" :key="cfg.id" :value="cfg.id">{{ cfg.label || cfg.model || '未命名' }}</option>
           </select>
-          <div v-if="discussing" class="action-spinner"></div>
+          <div v-if="discussShowSpinner" class="action-spinner"></div>
+          <span v-else-if="discussing" class="bg-task-label">后台运行中</span>
           <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="16" height="16" class="action-arrow">
             <polyline points="9 18 15 12 9 6"/>
           </svg>
@@ -177,7 +185,8 @@
           <select class="model-selector" v-model="activeForDebate" @click.stop>
             <option v-for="cfg in configs" :key="cfg.id" :value="cfg.id">{{ cfg.label || cfg.model || '未命名' }}</option>
           </select>
-          <div v-if="debating" class="action-spinner"></div>
+          <div v-if="debateShowSpinner" class="action-spinner"></div>
+          <span v-else-if="debating" class="bg-task-label">后台运行中</span>
           <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="16" height="16" class="action-arrow">
             <polyline points="9 18 15 12 9 6"/>
           </svg>
@@ -196,6 +205,7 @@
           </div>
           <div class="result-content" v-if="result.text">{{ result.text }}</div>
           <div class="result-content" v-else v-html="result.content"></div>
+          <div class="result-meta" v-if="result.meta">{{ result.meta }}</div>
           <div class="result-actions" v-if="result.actions">
             <button v-for="a in result.actions" :key="a.label" class="btn-result" :class="a.variant" @click="a.handler">{{ a.label }}</button>
           </div>
@@ -229,12 +239,14 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { getLLMConfigs, saveLLMConfig, removeLLMConfig, getActiveLLMIds, setActiveLLMId, MODEL_PRESETS } from '../settings'
-import { generateSmartSummary, calibrateIdeas, discussIdeasBatch, debateIdeasBatch, generateProjectSummary, testConnection } from '../llm'
-import { getTodayIdeas, getTodayNote, updateIdea, getIdeasByProject } from '../db'
+import { generateSmartSummary, generatePeriodSummary, calibrateIdeas, discussIdeasBatch, debateIdeasBatch, generateProjectSummary, testConnection } from '../llm'
+import { getTodayIdeas, getTodayNote, getIdeasByDateRange, updateIdea, getIdeasByProject } from '../db'
 import { useIdeaStore } from '../store'
+import { useBackgroundTasks } from '../composables/useBackgroundTasks'
 
 const store = useIdeaStore()
 const route = useRoute()
+const { tasks, startTask, finishTask, failTask, anyRunning, recentResult } = useBackgroundTasks()
 
 const presets = MODEL_PRESETS
 const selectedPreset = ref(presets[0])
@@ -255,10 +267,37 @@ const activeForDebate = ref('')
 const activeForProjectSummary = ref('')
 
 const summarizing = ref(false)
+const summaryScope = ref('today')  // 'today' | 'week' | 'month'
 const calibrating = ref(false)
-const discussing = ref(false)
-const debating = ref(false)
 const projectSummarizing = ref(false)
+
+// Background-task driven: discuss/debate use useBackgroundTasks instead of local booleans
+const discussing = computed(() => tasks.discuss.running)
+const debating = computed(() => tasks.debate.running)
+
+// Delayed visibility: show spinner only for first 2s, then switch to "后台运行中" label
+const discussShowSpinner = ref(false)
+const debateShowSpinner = ref(false)
+let _discussDelayTimer = null
+let _debateDelayTimer = null
+watch(() => tasks.discuss.running, (val) => {
+  clearTimeout(_discussDelayTimer)
+  if (val) {
+    discussShowSpinner.value = true
+    _discussDelayTimer = setTimeout(() => { discussShowSpinner.value = false }, 2000)
+  } else {
+    discussShowSpinner.value = false
+  }
+})
+watch(() => tasks.debate.running, (val) => {
+  clearTimeout(_debateDelayTimer)
+  if (val) {
+    debateShowSpinner.value = true
+    _debateDelayTimer = setTimeout(() => { debateShowSpinner.value = false }, 2000)
+  } else {
+    debateShowSpinner.value = false
+  }
+})
 const result = ref(null)
 const actionError = ref('')
 
@@ -269,6 +308,14 @@ const canConnect = computed(() => {
   if (!baseUrl.value) return false
   if (selectedPreset.value.noApiKey) return true
   return !!apiKey.value.trim()
+})
+
+const summaryScopeLabel = computed(() => {
+  switch (summaryScope.value) {
+    case 'week': return '本周总结'
+    case 'month': return '本月总结'
+    default: return '帮我进行今日想法总结'
+  }
 })
 
 onMounted(async () => {
@@ -376,6 +423,36 @@ async function doLogoutConfig(id) {
   actionError.value = ''
 }
 
+// --- Date range helpers ---
+function getWeekRange() {
+  const now = new Date()
+  const dayOfWeek = now.getDay() || 7 // Sunday=0 -> 7
+  const monday = new Date(now)
+  monday.setDate(now.getDate() - dayOfWeek + 1)
+  const sunday = new Date(now)
+  sunday.setDate(now.getDate() - dayOfWeek + 7)
+  return {
+    start: monday.toISOString().slice(0, 10),
+    end: sunday.toISOString().slice(0, 10)
+  }
+}
+
+function getMonthRange() {
+  const now = new Date()
+  const firstDay = new Date(now.getFullYear(), now.getMonth(), 1)
+  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+  return {
+    start: firstDay.toISOString().slice(0, 10),
+    end: lastDay.toISOString().slice(0, 10)
+  }
+}
+
+function formatDateRange(start, end) {
+  const s = start.replace(/-/g, '/')
+  const e = end.replace(/-/g, '/')
+  return `${s} — ${e}`
+}
+
 async function doSummarize() {
   const cfg = resolveConfig('summarize')
   if (!cfg) { actionError.value = '请先连接模型'; return }
@@ -383,26 +460,48 @@ async function doSummarize() {
   actionError.value = ''
   result.value = null
   try {
-    const ideas = await getTodayIdeas()
-    if (!ideas.length) {
-      result.value = { type: 'info', title: '今天还没有想法', text: '先记录一些想法再回来总结吧' }
+    // --- 今日 ---
+    if (summaryScope.value === 'today') {
+      const ideas = await getTodayIdeas()
+      if (!ideas.length) {
+        result.value = { type: 'info', title: '今天还没有想法', text: '先记录一些想法再回来总结吧' }
+        return
+      }
+      const existing = await getTodayNote()
+      const { content: summary, usage, fallback } = await generateSmartSummary(ideas, cfg)
+      const tokenInfo = usage ? ` (消耗 ${usage.total} tokens)` : ''
+      const warnText = fallback ? '⚠️ AI 模型未返回有效结果，已使用本地规则生成。\n\n' : ''
+      result.value = {
+        type: fallback ? 'fallback' : 'success',
+        title: `今日总结${fallback ? '（本地生成）' : tokenInfo}`,
+        text: warnText + summary,
+        actions: [
+          {
+            label: existing ? '覆盖今日笔记' : '保存为今日笔记',
+            variant: 'primary',
+            handler: () => saveSummary(summary, ideas, existing)
+          }
+        ]
+      }
       return
     }
-    const existing = await getTodayNote()
-    const { content: summary, usage, fallback } = await generateSmartSummary(ideas, cfg)
+
+    // --- 本周 / 本月 ---
+    const periodLabel = summaryScope.value === 'week' ? '本周' : '本月'
+    const range = summaryScope.value === 'week' ? getWeekRange() : getMonthRange()
+    const ideas = await getIdeasByDateRange(range.start, range.end)
+    if (!ideas.length) {
+      result.value = { type: 'info', title: `${periodLabel}还没有想法`, text: `在 ${formatDateRange(range.start, range.end)} 期间记录一些想法后再来总结` }
+      return
+    }
+    const { content: summary, usage, fallback } = await generatePeriodSummary(ideas, periodLabel, cfg)
     const tokenInfo = usage ? ` (消耗 ${usage.total} tokens)` : ''
-    const warnText = fallback ? '⚠️ AI 模型未返回有效结果，已使用本地规则生成。\n\n' : ''
+    const warnText = fallback ? '⚠️ AI 模型未返回有效结果。\n\n' : ''
     result.value = {
       type: fallback ? 'fallback' : 'success',
-      title: `今日总结${fallback ? '（本地生成）' : tokenInfo}`,
-      text: warnText + summary,
-      actions: [
-        {
-          label: existing ? '覆盖今日笔记' : '保存为今日笔记',
-          variant: 'primary',
-          handler: () => saveSummary(summary, ideas, existing)
-        }
-      ]
+      title: `${periodLabel}总结${fallback ? '（失败）' : tokenInfo}`,
+      text: warnText + (summary || `${periodLabel}共 ${ideas.length} 条想法。`),
+      meta: `范围: ${formatDateRange(range.start, range.end)} · ${ideas.length} 条想法`
     }
   } catch (e) {
     actionError.value = e.message || '生成失败'
@@ -498,55 +597,58 @@ async function applyCalibration(calibration, ideas) {
 async function doDiscuss(supplement = false) {
   const cfg = resolveConfig('discuss')
   if (!cfg) { actionError.value = '请先连接模型'; return }
-  discussing.value = true
+  if (tasks.discuss.running) { actionError.value = 'AI 讨论正在后台运行中，请等待完成'; return }
+
+  const ideas = await getTodayIdeas()
+  if (!ideas.length) {
+    result.value = { type: 'info', title: '今天还没有想法', text: '记录一些想法后再来讨论吧' }
+    return
+  }
+
+  function shouldSkip(idea) {
+    if (idea.completed) return true
+    const disc = idea.discussion || []
+    if (disc.length >= 3) return true
+    const mn = cfg.model || cfg.label || ''
+    if (disc.some(d => d.model === mn)) return true
+    return false
+  }
+
+  const targets = supplement
+    ? ideas.filter(i => !shouldSkip(i))
+    : ideas.filter(i => {
+        if (shouldSkip(i)) return false
+        return !i.discussion || !i.discussion.length
+      })
+
+  if (!targets.length) {
+    const msg = supplement
+      ? '所有符合条件的想法都已有评论或已完成'
+      : '每条想法都已有 AI 评论，或已完成/评论过多'
+    result.value = {
+      type: 'info', title: '无需讨论',
+      text: supplement ? msg : `${msg}。点击"补充讨论"可让当前模型基于已有评论追加新观点。`,
+      actions: supplement ? [] : [{ label: '补充讨论', variant: 'primary', handler: () => doDiscuss(true) }]
+    }
+    return
+  }
+
+  const configLabel = cfg.label || cfg.model || 'unknown'
+  const ok = startTask('discuss', configLabel, targets.length)
+  if (!ok) { actionError.value = '已有讨论任务在运行'; return }
+
   actionError.value = ''
-  result.value = null
-  try {
-    const ideas = await getTodayIdeas()
-    if (!ideas.length) {
-      result.value = { type: 'info', title: '今天还没有想法', text: '记录一些想法后再来讨论吧' }
-      return
+  result.value = { type: 'info', title: '讨论已提交到后台', text: `正在分析 ${targets.length} 条想法，你可以返回首页继续操作，完成后会自动刷新。` }
+
+  const prevDiscussions = {}
+  for (const idea of targets) {
+    if (Array.isArray(idea.discussion) && idea.discussion.length) {
+      prevDiscussions[idea.id] = idea.discussion
     }
+  }
 
-    function shouldSkip(idea) {
-      if (idea.completed) return true
-      const disc = idea.discussion || []
-      if (disc.length >= 3) return true
-      const mn = cfg.model || cfg.label || ''
-      if (disc.some(d => d.model === mn)) return true
-      return false
-    }
-
-    const targets = supplement
-      ? ideas.filter(i => !shouldSkip(i))
-      : ideas.filter(i => {
-          if (shouldSkip(i)) return false
-          return !i.discussion || !i.discussion.length
-        })
-
-    if (!targets.length) {
-      const msg = supplement
-        ? '所有符合条件的想法都已有评论或已完成'
-        : '每条想法都已有 AI 评论，或已完成/评论过多'
-      result.value = {
-        type: 'info', title: '无需讨论',
-        text: supplement ? msg : `${msg}。点击"补充讨论"可让当前模型基于已有评论追加新观点。`,
-        actions: supplement ? [] : [{ label: '补充讨论', variant: 'primary', handler: () => doDiscuss(true) }]
-      }
-      return
-    }
-
-    result.value = { type: 'info', title: '正在生成评论...', text: `正在分析 ${targets.length} 条想法，请稍候...` }
-
-    const prevDiscussions = {}
-    for (const idea of targets) {
-      if (Array.isArray(idea.discussion) && idea.discussion.length) {
-        prevDiscussions[idea.id] = idea.discussion
-      }
-    }
-
-    const newDiscussions = await discussIdeasBatch(targets, prevDiscussions, cfg)
-    // 并行写入 IndexedDB，提升大批量保存性能
+  // Fire-and-forget: do NOT await
+  discussIdeasBatch(targets, prevDiscussions, cfg).then(async (newDiscussions) => {
     const updates = newDiscussions.map(async (d) => {
       const idea = ideas.find(i => i.id === d.id)
       if (!idea) return null
@@ -558,73 +660,81 @@ async function doDiscuss(supplement = false) {
 
     await store.loadToday()
     const modelName = cfg.model || cfg.label || ''
-    const tokenInfo = newDiscussions.length ? ` · 模型: ${modelName}` : ''
     const suffix = supplement && count > 0 ? `（${modelName} 补充）` : ''
-    result.value = {
+    const summary = {
       type: 'success',
+      ok: true,
       title: `讨论完成${suffix}`,
-      text: `已为 ${count} 条想法生成评论${tokenInfo}。返回首页查看每条想法下方的讨论内容。`,
+      text: `已为 ${count} 条想法生成评论 · 模型: ${modelName}。返回首页查看每条想法下方的讨论内容。`,
       actions: supplement ? [] : [{ label: '补充讨论', variant: 'primary', handler: () => doDiscuss(true) }]
     }
-  } catch (e) {
-    actionError.value = e.message || '讨论生成失败'
-  } finally {
-    discussing.value = false
-  }
+    finishTask('discuss', summary)
+    // If user is still on this page, show the result
+    actionError.value = ''
+    result.value = summary
+  }).catch((e) => {
+    const errMsg = e.message || '讨论生成失败'
+    failTask('discuss', errMsg)
+    actionError.value = errMsg
+    result.value = { type: 'info', title: '讨论失败', text: errMsg }
+  })
 }
 
 async function doDebate(supplement = false) {
   const cfg = resolveConfig('debate')
   if (!cfg) { actionError.value = '请先连接模型'; return }
-  debating.value = true
+  if (tasks.debate.running) { actionError.value = 'AI 辩论正在后台运行中，请等待完成'; return }
+
+  const ideas = await getTodayIdeas()
+  if (!ideas.length) {
+    result.value = { type: 'info', title: '今天还没有想法', text: '记录一些想法后再来辩论吧' }
+    return
+  }
+
+  function shouldSkip(idea) {
+    if (idea.completed) return true
+    const deb = idea.debate || []
+    if (deb.length >= 3) return true
+    const mn = cfg.model || cfg.label || ''
+    if (deb.some(d => d.model === mn)) return true
+    return false
+  }
+
+  const targets = supplement
+    ? ideas.filter(i => !shouldSkip(i))
+    : ideas.filter(i => {
+        if (shouldSkip(i)) return false
+        return !i.debate || !i.debate.length
+      })
+
+  if (!targets.length) {
+    const msg = supplement
+      ? '所有符合条件的想法都已有辩驳或已完成'
+      : '每条想法都已有蓝方辩驳，或已完成/辩驳过多'
+    result.value = {
+      type: 'info', title: '无需辩论',
+      text: supplement ? msg : `${msg}。点击"补充辩论"可让当前模型基于已有辩驳追加新观点。`,
+      actions: supplement ? [] : [{ label: '补充辩论', variant: 'primary', handler: () => doDebate(true) }]
+    }
+    return
+  }
+
+  const configLabel = cfg.label || cfg.model || 'unknown'
+  const ok = startTask('debate', configLabel, targets.length)
+  if (!ok) { actionError.value = '已有辩论任务在运行'; return }
+
   actionError.value = ''
-  result.value = null
-  try {
-    const ideas = await getTodayIdeas()
-    if (!ideas.length) {
-      result.value = { type: 'info', title: '今天还没有想法', text: '记录一些想法后再来辩论吧' }
-      return
+  result.value = { type: 'info', title: '辩论已提交到后台', text: `正在分析 ${targets.length} 条想法，你可以返回首页继续操作，完成后会自动刷新。` }
+
+  const prevDebates = {}
+  for (const idea of targets) {
+    if (Array.isArray(idea.debate) && idea.debate.length) {
+      prevDebates[idea.id] = idea.debate
     }
+  }
 
-    function shouldSkip(idea) {
-      if (idea.completed) return true
-      const deb = idea.debate || []
-      if (deb.length >= 3) return true
-      const mn = cfg.model || cfg.label || ''
-      if (deb.some(d => d.model === mn)) return true
-      return false
-    }
-
-    const targets = supplement
-      ? ideas.filter(i => !shouldSkip(i))
-      : ideas.filter(i => {
-          if (shouldSkip(i)) return false
-          return !i.debate || !i.debate.length
-        })
-
-    if (!targets.length) {
-      const msg = supplement
-        ? '所有符合条件的想法都已有辩驳或已完成'
-        : '每条想法都已有蓝方辩驳，或已完成/辩驳过多'
-      result.value = {
-        type: 'info', title: '无需辩论',
-        text: supplement ? msg : `${msg}。点击"补充辩论"可让当前模型基于已有辩驳追加新观点。`,
-        actions: supplement ? [] : [{ label: '补充辩论', variant: 'primary', handler: () => doDebate(true) }]
-      }
-      return
-    }
-
-    result.value = { type: 'info', title: '正在生成辩驳...', text: `正在分析 ${targets.length} 条想法，请稍候...` }
-
-    const prevDebates = {}
-    for (const idea of targets) {
-      if (Array.isArray(idea.debate) && idea.debate.length) {
-        prevDebates[idea.id] = idea.debate
-      }
-    }
-
-    const newDebates = await debateIdeasBatch(targets, prevDebates, cfg)
-    // 并行写入 IndexedDB，提升大批量保存性能
+  // Fire-and-forget: do NOT await
+  debateIdeasBatch(targets, prevDebates, cfg).then(async (newDebates) => {
     const updates = newDebates.map(async (d) => {
       const idea = ideas.find(i => i.id === d.id)
       if (!idea) return null
@@ -636,19 +746,23 @@ async function doDebate(supplement = false) {
 
     await store.loadToday()
     const modelName = cfg.model || cfg.label || ''
-    const tokenInfo = newDebates.length ? ` · 模型: ${modelName}` : ''
     const suffix = supplement && count > 0 ? `（${modelName} 补充）` : ''
-    result.value = {
+    const summary = {
       type: 'success',
+      ok: true,
       title: `辩论完成${suffix}`,
-      text: `已为 ${count} 条想法生成蓝方辩驳${tokenInfo}。返回首页查看每条想法下方的辩论内容。`,
+      text: `已为 ${count} 条想法生成蓝方辩驳 · 模型: ${modelName}。返回首页查看每条想法下方的辩论内容。`,
       actions: supplement ? [] : [{ label: '补充辩论', variant: 'primary', handler: () => doDebate(true) }]
     }
-  } catch (e) {
-    actionError.value = e.message || '辩论生成失败'
-  } finally {
-    debating.value = false
-  }
+    finishTask('debate', summary)
+    actionError.value = ''
+    result.value = summary
+  }).catch((e) => {
+    const errMsg = e.message || '辩论生成失败'
+    failTask('debate', errMsg)
+    actionError.value = errMsg
+    result.value = { type: 'info', title: '辩论失败', text: errMsg }
+  })
 }
 
 async function doProjectSummary() {
@@ -1058,6 +1172,80 @@ async function doProjectSummary() {
   flex-shrink: 0;
 }
 
+/* --- summarize card --- */
+.summarize-card {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+.summarize-row-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+/* --- summarize scope pills --- */
+.scope-pills {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  flex-basis: 100%;
+  padding-left: 0;
+}
+
+.scope-pill {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
+  transition: all var(--duration-fast);
+}
+
+.scope-pill.active {
+  background: var(--color-accent);
+  color: #fff;
+}
+
+.scope-pill:active {
+  transform: scale(0.95);
+}
+
+/* --- summarize generate button --- */
+.btn-summarize {
+  flex-shrink: 0;
+  padding: 6px 16px;
+  border-radius: var(--radius-md);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  transition: all var(--duration-fast);
+  min-width: 56px;
+  min-height: 32px;
+}
+
+.btn-summarize:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-summarize:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* result meta line */
+.result-meta {
+  margin-top: 10px;
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+  padding-top: 8px;
+  border-top: 1px solid var(--color-divider);
+}
+
 .model-selector {
   font-size: var(--text-xs);
   padding: 4px 24px 4px 8px;
@@ -1088,6 +1276,23 @@ async function doProjectSummary() {
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
   flex-shrink: 0;
+}
+
+.bg-task-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+  white-space: nowrap;
+  animation: pulse-bg 1.8s ease-in-out infinite;
+}
+
+@keyframes pulse-bg {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 
 @keyframes spin {
